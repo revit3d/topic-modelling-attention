@@ -21,6 +21,7 @@ sdist/
 var/
 wheels/
 share/python-wheels/
+tokenizer_data/
 *.egg-info/
 .installed.cfg
 *.egg
