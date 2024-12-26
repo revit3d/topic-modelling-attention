@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "topic-modelling-attention"
+version = "0.1.0"
+description = "Topic modelling with attention-based approach"
+authors = ["Diyakov Ilya <s02210378@gse.cs.msu.ru>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.12"
+torch = "^2.5.1"
+pandas = "^2.2.3"
+seaborn = "^0.13.2"
+ipykernel = "^6.29.5"
+nltk = "^3.9.1"
+jax = "^0.4.38"
+scikit-learn = "^1.6.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
