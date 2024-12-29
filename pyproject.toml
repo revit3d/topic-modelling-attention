@@ -15,6 +15,7 @@ ipykernel = "^6.29.5"
 nltk = "^3.9.1"
 jax = "^0.4.38"
 scikit-learn = "^1.6.0"
+pytest = "^8.3.4"
 
 
 [build-system]
