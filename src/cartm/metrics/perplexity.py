@@ -22,7 +22,7 @@ class PerplexityMetric(Metric):
             self.bow_true = self.bow_true.toarray()
         self._eps = eps
 
-    def __call__(self, phi, theta):
+    def _call_impl(self, phi, theta):
         likelihood = jnp.sum(self.bow_true * jnp.log(theta @ phi.T + self._eps))
         perplexity = jnp.exp(-likelihood / self.norm_cf)
         return perplexity
