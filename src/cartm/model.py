@@ -143,7 +143,7 @@ class ContextTopicModel():
             tril_matrix[np.arange(i, self.seq_len), np.arange(self.seq_len - i)] = gamma * (1 - gamma) ** i
 
         # contstruct full matrix (self + prefix + suffix context)
-        full_matrix = np.eye(tril_matrix.shape[0]) * gamma + tril_matrix + tril_matrix.T
+        full_matrix = tril_matrix + tril_matrix.T + np.eye(tril_matrix.shape[0]) * gamma
 
         # normalize weights and transpose
         full_matrix /= full_matrix.sum(axis=0)
@@ -179,7 +179,7 @@ class ContextTopicModel():
             seed: random seed
         """
         key = jax.random.key(seed)
-        self.phi = jax.random.normal(
+        self.phi = jax.random.uniform(
             key=key,
             shape=(self.vocab_size, self.n_topics),
         )  # (W, T)
@@ -208,13 +208,13 @@ class ContextTopicModel():
 
             if verbose:
                 diff_norm = jnp.linalg.norm(phi_new - self.phi)
-                print(f'Iteration [{it}/{max_iter}], phi update diff norm: {diff_norm:.04f}')
+                print(f'Iteration [{it + 1}/{max_iter}], phi update diff norm: {diff_norm:.04f}')
                 if len(self._metrics) > 0:
                     print('Metrics:')
                     theta_doc = theta_new.reshape(data.shape + (-1, )).sum(axis=1)  # (D, T)
                     for tag, metric in self._metrics.items():
                         value = metric(phi_new, theta_doc)
-                        print(f'\t{tag}: {value}')
+                        print(f'\t{tag}: {value:.04f}')
 
             self.phi = phi_new
             if diff_norm < tol:
