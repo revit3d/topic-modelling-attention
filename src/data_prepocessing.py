@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+from jax import Array
 
 import re
 from nltk.corpus import stopwords
@@ -6,7 +7,23 @@ from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 
 
-class ArticlesDataset():
+class ArticlesDataset:
+    def __init__(self, data: list[str]):
+        texts_tokenized = []
+        for doc in data:
+            texts_tokenized.append(self.preprocess_text(doc))
+        self.vocab = self.create_vocab(texts_tokenized)
+
+        self._data = []
+        self._doc_bounds = [0, ]
+        for text in texts_tokenized:
+            for word in text:
+                self._data.append(self.vocab[word])
+            self._doc_bounds.append(len(self._data))
+
+        self._data = jnp.array(self._data, dtype=int)
+        self._doc_bounds = jnp.array(self._doc_bounds, dtype=int)
+
     @staticmethod
     def preprocess_text(text: str) -> list[str]:
         text = text.lower()  # lower characters
@@ -32,25 +49,34 @@ class ArticlesDataset():
     def data(self):
         return self._data, self._doc_bounds
 
-    def __init__(self, data: list[str]):
-        texts_tokenized = []
-        for doc in data:
-            texts_tokenized.append(self.preprocess_text(doc))
-        self.vocab = self.create_vocab(texts_tokenized)
-
-        self._data = []
-        self._doc_bounds = [0, ]
-        for text in texts_tokenized:
-            for word in text:
-                self._data.append(self.vocab[word])
-            self._doc_bounds.append(len(self._data))
-
-        self._data = jnp.array(self._data, dtype=int)
-        self._doc_bounds = jnp.array(self._doc_bounds, dtype=int)
-
     def __len__(self):
         return len(self._data)
 
-    def __getitem__(self, index) -> jnp.ndarray:
-        tokens = self._data[index]
+    def __getitem__(self, idx) -> Array:
+        tokens = self._data[idx]
         return tokens
+
+
+class BatchLoader:
+    def __init__(self, data: Array, doc_bounds: Array, *, batch_size: int = 10000):
+        self.batch_size = batch_size
+        self._batches = []
+
+        num_batches = jnp.ceil(len(data) / batch_size).astype(int)
+        for i in range(num_batches):
+            start_idx = i * self.batch_size
+            end_idx = (i + 1) * self.batch_size
+            end_idx = min(end_idx, len(data))
+
+            data_batch = data[start_idx:end_idx]
+            bounds_batch_mask = (doc_bounds >= start_idx) & (doc_bounds < end_idx)
+            doc_bounds_batch = doc_bounds[bounds_batch_mask]
+            doc_bounds_batch -= start_idx  # absolute bounds to batch-relative bounds
+
+            self._batches.append((data_batch, doc_bounds_batch))
+
+    def __len__(self):
+        return len(self._batches)
+
+    def __getitem__(self, idx):
+        return self._batches[idx]
