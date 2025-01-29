@@ -245,7 +245,11 @@ class ContextTopicModel():
         theta_it = jnp.sum(theta_it, axis=1)  # (I, T)
         return theta_it
 
-    def _calc_p_ti(self, theta: jax.Array, batch: jax.Array) -> jax.Array:
+    def _calc_p_ti(
+            self,
+            theta: jax.Array,
+            batch: jax.Array
+    ) -> tuple[jax.Array, jax.Array]:
         phi_it = jnp.take_along_axis(
             self.phi,
             indices=batch[:, None],
@@ -287,6 +291,38 @@ class ContextTopicModel():
             value = metric(phi_it=phi_it, phi_wt=phi_wt, theta=theta)
             print(f'    {tag}: {value:.04f}')
 
+    def _step(
+            self,
+            batch: jax.Array,
+            ctx_bounds: jax.Array,
+            grad_regularization: callable
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        # calculate phi' (words -> topics) matrix (phi with old p_{ti})
+        phi_hatch = self._calc_phi_hatch()  # (W, T)
+
+        # calculate theta_it = p(t|C_i) matrix
+        theta = self._calc_theta(
+            phi_hatch=phi_hatch,
+            batch=batch,
+            ctx_bounds=ctx_bounds,
+        )  # (I, T)
+
+        # update p_{ti} - topic probability distribution for i-th context
+        # phi_it = p(C_i|t)
+        p_ti, phi_it = self._calc_p_ti(theta, batch=batch)  # (I, T)
+
+        # update n_{t} - topic probability distribution
+        self.n_t = self._calc_n_t(p_ti)  # (T, )
+
+        # update phi_wt = p(w|t) matrix
+        phi_new = self._calc_phi(
+            p_ti=p_ti,
+            batch=batch,
+            grad_regularization=grad_regularization,
+        )  # (W, T)
+
+        return phi_it, phi_new, theta
+
     def fit(
             self,
             data: jax.Array,
@@ -314,37 +350,19 @@ class ContextTopicModel():
             key=key,
             shape=(self.vocab_size, self.n_topics),
         )  # (W, T)
+        self.phi = self._norm(self.phi)
         self.n_t = jnp.full(
             shape=(self.n_topics, ),
             fill_value=len(data) / self.n_topics,
         )  # (T, )
         grad_regularization = self._compose_regularizations()
 
-        self.phi = self._norm(self.phi)
         for it in range(max_iter):
-            # calculate phi' (words -> topics) matrix (phi with old p_{ti})
-            phi_hatch = self._calc_phi_hatch()  # (W, T)
-
-            # calculate theta_it = p(t|C_i) matrix
-            theta = self._calc_theta(
-                phi_hatch=phi_hatch,
+            phi_it, phi_new, theta = self._step(
                 batch=data,
                 ctx_bounds=ctx_bounds,
-            )  # (I, T)
-
-            # update p_{ti} - topic probability distribution for i-th context
-            # phi_it = p(C_i|t)
-            p_ti, phi_it = self._calc_p_ti(theta, batch=data)  # (I, T)
-
-            # update n_{t} - topic probability distribution
-            self.n_t = self._calc_n_t(p_ti)  # (T, )
-
-            # update phi_wt = p(w|t) matrix
-            phi_new = self._calc_phi(
-                p_ti=p_ti,
-                batch=data,
-                grad_regularization=grad_regularization,
-            )  # (W, T)
+                grad_regularization=grad_regularization
+            )
 
             if verbose:
                 diff_norm = jnp.linalg.norm(phi_new - self.phi)
