@@ -131,6 +131,8 @@ class ContextTopicModel():
         return jnp.array(context_weights)  # (2C + 1, )
 
     def _get_context_weights_2d(self, batch_size: int, attn_bounds: jax.Array) -> jax.Array:
+        assert len(attn_bounds) > 0 and attn_bounds[0] == 0 and attn_bounds[-1] == batch_size
+
         # True where to attend
         attn_matrix = jnp.ones(
             shape=(batch_size, self.ctx_len * 2 + 1),
@@ -183,7 +185,7 @@ class ContextTopicModel():
 
         # calculate context weights with respect to attention and normalize weights
         context_matrix = self._context_weights_1d * attn_matrix  # (I, 2C + 1)
-        context_matrix /= context_matrix.sum(axis=1, keepdims=True)
+        context_matrix = self._norm(context_matrix.T).T
         return context_matrix  # (I, 2C + 1)
 
     def _get_context_tensor(self, batch: jax.Array) -> jax.Array:
@@ -193,7 +195,7 @@ class ContextTopicModel():
         if helpful for fast context convolution with given weights.
         """
         batch_size = batch.shape[0]
-        pad_token = 0  # -1
+        pad_token = -1  # assuming we don't have negative tokens in vocabulary
 
         # shift for each 2d "slice" of data
         shifts = jnp.arange(self.ctx_len * 2, -1, -1)  # (2C + 1, )
@@ -216,7 +218,7 @@ class ContextTopicModel():
         )  # (I + 2C, )
         stacked_tensor = stacked_tensor[~pad_context_mask]
 
-        assert stacked_tensor.shape[0] == batch.shape[0]
+        assert stacked_tensor.shape[0] == batch_size, f'{stacked_tensor.shape[0]}, {batch_size}'
         return stacked_tensor  # (I, 2C + 1, T)
 
     def _calc_phi_hatch(self) -> jax.Array:
@@ -265,7 +267,7 @@ class ContextTopicModel():
             self,
             p_ti: jax.Array,
             batch: jax.Array,
-            grad_regularization: callable,
+            grad_reg: callable,
     ) -> jax.Array:
         phi_new = jnp.add.at(
             jnp.zeros_like(self.phi),
@@ -273,7 +275,7 @@ class ContextTopicModel():
             p_ti,
             inplace=False,
         )  # (W, T)
-        phi_new += self.phi * grad_regularization(self.phi)  # (W, T)
+        phi_new += self.phi * grad_reg(self.phi)  # (W, T)
         phi_new = self._norm(phi_new)  # (W, T)
         return phi_new
 
@@ -295,7 +297,7 @@ class ContextTopicModel():
             self,
             batch: jax.Array,
             ctx_bounds: jax.Array,
-            grad_regularization: callable
+            grad_reg: callable
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         # calculate phi' (words -> topics) matrix (phi with old p_{ti})
         phi_hatch = self._calc_phi_hatch()  # (W, T)
@@ -318,31 +320,62 @@ class ContextTopicModel():
         phi_new = self._calc_phi(
             p_ti=p_ti,
             batch=batch,
-            grad_regularization=grad_regularization,
+            grad_reg=grad_reg,
         )  # (W, T)
 
         return phi_it, phi_new, theta
 
+    def _batched_step_wrapper(
+            self,
+            batches: list[tuple[jax.Array, jax.Array]],
+            grad_reg: callable,
+            lr: float,
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        phi_new = self.phi.copy()
+        phi_it = []
+        theta = []
+
+        for batch, ctx_bounds_batch in batches:
+            phi_it_step, phi_step, theta_step = self._step(
+                batch=batch,
+                ctx_bounds=ctx_bounds_batch,
+                grad_reg=grad_reg,
+            )
+            phi_new = phi_new * (1 - lr) + phi_step * lr
+            phi_it.append(phi_it_step)
+            theta.append(theta_step)
+
+        phi_it = jnp.concatenate(phi_it).reshape(-1, self.n_topics)
+        theta = jnp.concatenate(theta).reshape(-1, self.n_topics)
+        return phi_it, phi_new, theta
+
     def fit(
             self,
-            data: jax.Array,
-            ctx_bounds: jax.Array,
+            data: jax.Array | list[tuple[jax.Array, jax.Array]],
+            ctx_bounds: jax.Array = None,
             *,
+            lr: float = 0.1,
             max_iter: int = 1000,
             tol: float = 1e-3,
-            verbose: bool = False,
+            verbose: int = 0,
             seed: int = 0,
     ):
         """
         Fit the model with the corpus of documents.
 
         Args:
-            data: array of shape (I, ), containing tokenized words of each document.
+            data: array of shape (I, ), containing tokenized words of each document
+                or iterable returning tuples (data_batch, ctx_bounds_batch).
             ctx_bounds: array of shape (B, ), containing bounds for context. Words
                 beyond the bound are ignored in the context.
+            lr: coefficient for updating phi in online mode:
+                phi = phi_prev * (1 - lr) + phi_new * lr
             max_iter: max number of iterations.
             tol: early stopping threshold.
             verbose: write logs to stdout on each iteration.
+                0 - silent
+                1 - output general info about iterations
+                2 - output metric values after each iteration
             seed: random seed.
         """
         key = jax.random.key(seed)
@@ -358,16 +391,26 @@ class ContextTopicModel():
         grad_regularization = self._compose_regularizations()
 
         for it in range(max_iter):
-            phi_it, phi_new, theta = self._step(
-                batch=data,
-                ctx_bounds=ctx_bounds,
-                grad_regularization=grad_regularization
-            )
+            if ctx_bounds is None:
+                # batched input
+                phi_it, phi_new, theta = self._batched_step_wrapper(
+                    batches=data,
+                    grad_reg=grad_regularization,
+                    lr=lr,
+                )
+            else:
+                # non-batched input
+                phi_it, phi_new, theta = self._step(
+                    batch=data,
+                    ctx_bounds=ctx_bounds,
+                    grad_reg=grad_regularization,
+                )
 
-            if verbose:
+            if verbose > 0:
                 diff_norm = jnp.linalg.norm(phi_new - self.phi)
                 print(f'Iteration [{it + 1}/{max_iter}], phi update diff norm: {diff_norm:.04f}')
-                self._calc_metrics(phi_it, phi_new, theta)
+                if verbose > 1:
+                    self._calc_metrics(phi_it, phi_new, theta)
 
             self.phi = phi_new
             if diff_norm < tol:
