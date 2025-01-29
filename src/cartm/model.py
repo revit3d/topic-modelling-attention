@@ -3,8 +3,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from . import regularization
-from . import metrics
+from . import regularization as reg
+from . import metrics as mtc
 
 
 class ContextTopicModel():
@@ -14,38 +14,38 @@ class ContextTopicModel():
 
     def __init__(
         self,
-        ctx_len: int,
-        max_len: int,
         vocab_size: int,
-        pad_token: int,
+        ctx_len: int,
         n_topics: int = 10,
+        gamma: float = 0.6,
+        self_aware_context: bool = False,
         regularizers: list = None,
         metrics: list = None,
         eps: float = 1e-12,
     ):
         """
         Args:
-            ctx_len: one-sided context size
-            max_len: max length of a document, W_d
             vocab_size: corpus vocabulary size, W
+            ctx_len: one-sided context size, C
             n_topics: number of topics, T
+            gamma: parameter used for calculating weights of the word embeddings in the context
+            self_aware_context: whether to use the word itself in its context
             regularizers: list of regularizations (see `add_regularization` method)
             metrics: list of metrics calculated on each step
             eps: parameter set for balance between numerical stability and precision
 
         Note:
             - Total context of a word on `i`-th index is ctx_len words to the left,\\
-            `ctx_len` words to the right, and the word itself
-            - All documents should be padded to `max_len` length
+            `ctx_len` words to the right, and the word itself (if `self_aware_context` = True)
         """
         self.ctx_len = ctx_len
-        self.seq_len = max_len
-        self.n_topics = n_topics
         self.vocab_size = vocab_size
-        self.pad_token = pad_token
+        self.n_topics = n_topics
+        self._gamma = gamma
+        self._self_aware_context = self_aware_context
         self._eps = eps
 
-        self._context_coeffs = self._create_context_coeff_matrix()
+        self._context_weights_1d = self._get_context_weights_1d(self._gamma)
 
         self._regularizations = dict()
         if regularizers is not None:
@@ -57,107 +57,238 @@ class ContextTopicModel():
             for metric in metrics:
                 self.add_metric(metric)
 
-    def add_regularization(self, reg: regularization.Regularization):
+    def add_regularization(self, reg: reg.Regularization):
         """
         Add a regularization to the model.
 
         Note:
         - `reg` has to be a child of base `Regularization` class
         """
-        if not isinstance(reg, regularization.Regularization):
+        if not isinstance(reg, reg.Regularization):
             raise TypeError(
                 f'Regularization [{reg.__name__}] has to be a subclass of '
-                f'Regularization base class, got type {type(reg)}'
+                f'the Regularization base class, got type {type(reg)}'
             )
 
-        try:
-            self._regularizations[reg.tag] = reg
-        except Exception:
-            raise
+        self._regularizations[reg.tag] = reg
 
-    def add_metric(self, metric: metrics.Metric):
+    def add_metric(self, metric: mtc.Metric):
         """
         Add a metric to the model.
 
         Note:
         - `metric` has to be a child of base `Metric` class
         """
-        if not isinstance(metric, metrics.Metric):
+        if not isinstance(metric, mtc.Metric):
             raise TypeError(
                 f'Metric [{metric.__name__}] has to be a subclass of '
-                f'Metric base class, got type {type(metric)}'
+                f'the Metric base class, got type {type(metric)}'
             )
 
+        self._metrics[metric.tag] = metric
+
+    def remove_regularization(self, tag: str):
+        """Remove the regularization with specified tag."""
         try:
-            self._metrics[metric.tag] = metric
-        except Exception:
-            raise
+            self._regularizations.pop(tag)
+        except KeyError:
+            print(
+                f'Regularization with tag {tag} is not present. '
+                f'Did you mean to use remove_metric?'
+            )
+
+    def remove_metric(self, tag: str):
+        """Remove the metric with the specified tag."""
+        try:
+            self._metrics.pop(tag)
+        except KeyError:
+            print(
+                f'Metric with tag {tag} is not present. '
+                f'Did you mean to use remove_regularization?'
+            )
 
     def _norm(self, x: jax.Array) -> jax.Array:
-        assert jnp.any(~jnp.isnan(x)), jnp.sum(x)
+        assert jnp.any(~jnp.isnan(x))
         # take x+ = max(x, 0) element-wise (perform projection on positive simplex)
         x = jnp.maximum(x, jnp.zeros_like(x))
-        # normalize values in non-zero rows to 1 (mapping from the positive simplex to the unit simplex)
+        # normalize values in non-zero rows to 1
+        # (mapping from the positive simplex to the unit simplex)
         norm = x.sum(axis=0)
         x = jnp.where(norm > self._eps, x / norm, jnp.zeros_like(x))
         return x
 
-    def _calc_phi_hatch(self):
-        return self._norm(self.phi.T * self.n_t[:, None]).T
+    def _get_context_weights_1d(self, gamma: float) -> jax.Array:
+        # w_i = gamma * (1 - gamma)**i
+        suffix_context_weights = np.cumprod(np.full(self.ctx_len, (1 - gamma))) * gamma  # (C, )
+        prefix_context_weights = suffix_context_weights[::-1]  # (C, )
+        context_weights = np.concatenate([
+            prefix_context_weights,
+            [self._gamma * self._self_aware_context],  # whether to ignore the word itself
+            suffix_context_weights,
+        ])
+        return jnp.array(context_weights)  # (2C + 1, )
 
-    def _calc_theta_new(self, phi_hatch, data):
-        # we can interpret phi as a bunch of embeddings for words,
-        # thus creating tensor of embeddings of words in documents
-        # and calculating context (document embedding), based on this
-        data_emb = jnp.take_along_axis(phi_hatch[None, ...], indices=data[..., None], axis=1)  # (D, W_d, T)
-        theta_new = jnp.sum(
-            data_emb[:, None, :, :] * self._context_coeffs[None, :, :, None],
-            axis=2,
-        )  # (D, W_d, T)
-        # now we see each context window as a new document, I - number of context windows
-        theta_new = theta_new.reshape(-1, theta_new.shape[-1])  # (I, T)
-        return theta_new
+    def _get_context_weights_2d(self, batch_size: int, attn_bounds: jax.Array) -> jax.Array:
+        # True where to attend
+        attn_matrix = np.ones(
+            shape=(batch_size, self.ctx_len * 2 + 1),
+            dtype=bool,
+        )  # (I, 2C + 1)
 
-    def _calc_p_ti(self, theta_new, data):
-        data_emb = jnp.take_along_axis(self.phi[None, ...], indices=data[..., None], axis=1)  # (D, W_d, T)
-        p_ti = data_emb.reshape(-1, data_emb.shape[-1])  # (I, T)
-        p_ti = self._norm((p_ti * theta_new).T).T  # (I, T)
-        return p_ti
+        # prefix attention mask (ignore words from the previous document in context)
+        prefix_bounds = attn_bounds[:-1]  # (B, )
 
-    def _calc_n_t(self, p_ti):
+        ignored_mask_prefix = jnp.ones((self.ctx_len, self.ctx_len), dtype=bool)  # (C, C)
+        ignored_mask_prefix = jnp.rot90(~np.triu(ignored_mask_prefix))  # (C, C)
+        # for broadcasting
+        ignored_mask_prefix = jnp.tile(
+            ignored_mask_prefix,
+            reps=len(prefix_bounds),
+        ).T  # (B * C, C)
+
+        # context (row) indices where attention mask is needed (the beginning of a new document)
+        shifts = np.ones((len(prefix_bounds), self.ctx_len), dtype=int)  # (B, C)
+        shifts[:, 0] = prefix_bounds
+        shifts = jnp.cumsum(shifts, axis=1)
+        shifts = shifts.reshape(-1, 1)  # (B * C, 1)
+
+        # words (column) indices in prefix context
+        prefix_columns = jnp.arange(self.ctx_len)  # (C, )
+
+        attn_matrix[shifts, prefix_columns] = ignored_mask_prefix
+
+        # suffix attention (ignore words from the next document in context)
+        suffix_bounds = attn_bounds[1:] - self.ctx_len  # (B, )
+
+        ignored_mask_suffix = jnp.ones((self.ctx_len, self.ctx_len), dtype=bool)  # (C, C)
+        ignored_mask_suffix = jnp.rot90(~np.tril(ignored_mask_suffix))  # (C, C)
+        # for broadcasting
+        ignored_mask_suffix = jnp.tile(
+            ignored_mask_suffix,
+            reps=len(suffix_bounds),
+        ).T  # (B * C, C)
+
+        # context (row) indices where attention mask is needed (the end of a document)
+        shifts = np.ones((len(suffix_bounds), self.ctx_len), dtype=int)  # (B, C)
+        shifts[:, 0] = suffix_bounds
+        shifts = jnp.cumsum(shifts, axis=1)
+        shifts = shifts.reshape(-1, 1)  # (B * C, 1)
+
+        # words (column) indices in suffix context
+        suffix_columns = jnp.arange(self.ctx_len + 1, self.ctx_len * 2 + 1)  # (C, )
+
+        attn_matrix[shifts, suffix_columns] = ignored_mask_suffix
+
+        # calculate context weights with respect to attention and normalize weights
+        context_matrix = self._context_weights_1d * attn_matrix  # (I, 2C + 1)
+        context_matrix /= context_matrix.sum(axis=1, keepdims=True)
+        return context_matrix  # (I, 2C + 1)
+
+    def _get_context_tensor(self, batch: jax.Array) -> jax.Array:
+        """
+        Stacks 2d-data into a 3d-tensor along a new (context) axis,
+        shifting the data along the new axis. The constructed tensor
+        if helpful for fast context convolution with given weights.
+        """
+        batch_size = batch.shape[0]
+        pad_token = 0  # -1
+
+        # shift for each 2d "slice" of data
+        shifts = jnp.arange(self.ctx_len * 2, -1, -1)  # (2C + 1, )
+        max_shift = self.ctx_len * 2 + batch_size
+
+        stacked_tensor = np.full(
+            (max_shift, self.ctx_len * 2 + 1, self.n_topics),
+            fill_value=pad_token,
+            dtype=jnp.float64,
+        )  # (I + 2C, 2C + 1, T)
+
+        row_indices = jnp.arange(batch_size)[:, None] + shifts[None, :]  # (I, 2C + 1)
+        col_indices = jnp.arange(self.ctx_len * 2 + 1)  # (2C + 1)
+
+        stacked_tensor[row_indices, col_indices] = batch[:, None]
+
+        # discard contexts for padding
+        pad_context_mask = jnp.all(
+            jnp.isclose(stacked_tensor[:, self.ctx_len, :], pad_token),
+            axis=1,
+        )  # (I + 2C, )
+        stacked_tensor = stacked_tensor[~pad_context_mask]
+        assert stacked_tensor.shape[0] == batch.shape[0]
+        return stacked_tensor  # (I, 2C + 1, T)
+
+    def _calc_phi_hatch(self) -> jax.Array:
+        return self._norm(self.phi.T * self.n_t[:, None]).T  # (W, T)
+
+    def _calc_theta(
+            self,
+            phi_hatch: jax.Array,
+            batch: jax.Array,
+            ctx_bounds: jax.Array,
+    ) -> jax.Array:
+        batch_size = batch.shape[0]
+
+        phi_it_hatch = jnp.take_along_axis(
+            phi_hatch,
+            indices=batch[:, None],
+            axis=0,
+        )  # (I, T)
+        phi_it_hatch_with_context = self._get_context_tensor(phi_it_hatch)  # (I, 2C + 1, T)
+
+        context_matrix = self._get_context_weights_2d(
+            batch_size=batch_size,
+            attn_bounds=ctx_bounds,
+        )  # (I, 2C + 1)
+        theta_it = context_matrix[..., None] * phi_it_hatch_with_context  # (I, 2C + 1, T)
+        theta_it = jnp.sum(theta_it, axis=1)  # (I, T)
+        return theta_it
+
+    def _calc_p_ti(self, theta: jax.Array, batch: jax.Array) -> jax.Array:
+        phi_it = jnp.take_along_axis(
+            self.phi,
+            indices=batch[:, None],
+            axis=0,
+        )  # (I, T)
+        p_ti = self._norm((phi_it * theta).T).T  # (I, T)
+        return p_ti, phi_it
+
+    def _calc_n_t(self, p_ti: jax.Array) -> jax.Array:
         return jnp.sum(p_ti, axis=0)  # (T, )
 
-    def _calc_phi(self, p_ti, data, grad_regularization):
-        indices = data.flatten()  # (I, )
-        phi_new = jnp.add.at(jnp.zeros_like(self.phi), indices, p_ti, inplace=False)  # (W, T)
+    def _calc_phi(
+            self,
+            p_ti: jax.Array,
+            batch: jax.Array,
+            grad_regularization: callable,
+    ) -> jax.Array:
+        phi_new = jnp.add.at(
+            jnp.zeros_like(self.phi),
+            batch,
+            p_ti,
+            inplace=False,
+        )  # (W, T)
         phi_new += self.phi * grad_regularization(self.phi)  # (W, T)
         phi_new = self._norm(phi_new)  # (W, T)
         return phi_new
-
-    def _create_context_coeff_matrix(self) -> jax.Array:
-        gamma = 1 / self.ctx_len
-
-        # construct tril matrix (suffix context)
-        tril_matrix = np.zeros((self.seq_len, self.seq_len))
-        for i in np.arange(1, self.ctx_len + 1):
-            tril_matrix[np.arange(i, self.seq_len), np.arange(self.seq_len - i)] = gamma * (1 - gamma) ** i
-
-        # contstruct full matrix (self + prefix + suffix context)
-        full_matrix = tril_matrix + tril_matrix.T + np.eye(tril_matrix.shape[0]) * gamma
-
-        # normalize weights and transpose
-        full_matrix /= full_matrix.sum(axis=0)
-        full_matrix = full_matrix.T
-        return jnp.array(full_matrix)
 
     def _compose_regularizations(self):
         regs = self._regularizations.values()
         sum_reg = lambda x: sum([1.0, ] + [reg(x) for reg in regs])
         return jax.jit(jax.grad(sum_reg))
 
+    def _calc_metrics(self, phi_it: jax.Array, phi_wt: jax.Array, theta: jax.Array):
+        if len(self._metrics) == 0:
+            return
+
+        print('  Metrics:')
+        for tag, metric in self._metrics.items():
+            value = metric(phi_it=phi_it, phi_wt=phi_wt, theta=theta)
+            print(f'    {tag}: {value:.04f}')
+
     def fit(
         self,
         data: jax.Array,
+        ctx_bounds: jax.Array,
         max_iter: int = 1000,
         tol: float = 1e-3,
         verbose: bool = False,
@@ -166,17 +297,14 @@ class ContextTopicModel():
         """
         Fit the model with the corpus of documents.
 
-        The corpus is represented as a matrix of shape (D, W_d), where D\\
-        is the number of documents and W_d is the max length of document\\
-        in the corpus. Thus, all documents must be aligned to the same\\
-        size with pad_token.
-
         Args:
-            data: matrix of shape (D, W_d), containing tokenized words of each document
-            max_iter: max number of iterations
-            tol: early stopping threshold
-            verbose: write logs to stdout on each iteration
-            seed: random seed
+            data: array of shape (I, ), containing tokenized words of each document.
+            ctx_bounds: array of shape (B, ), containing bounds for context. Words
+                beyond the bound are ignored in the context.
+            max_iter: max number of iterations.
+            tol: early stopping threshold.
+            verbose: write logs to stdout on each iteration.
+            seed: random seed.
         """
         key = jax.random.key(seed)
         self.phi = jax.random.uniform(
@@ -185,7 +313,7 @@ class ContextTopicModel():
         )  # (W, T)
         self.n_t = jnp.full(
             shape=(self.n_topics, ),
-            fill_value=jnp.sum(data, dtype=jnp.float32) / self.n_topics,
+            fill_value=len(data) / self.n_topics,
         )  # (T, )
         grad_regularization = self._compose_regularizations()
 
@@ -194,27 +322,31 @@ class ContextTopicModel():
             # calculate phi' (words -> topics) matrix (phi with old p_{ti})
             phi_hatch = self._calc_phi_hatch()  # (W, T)
 
-            # create theta (documents -> topics) matrix
-            theta_new = self._calc_theta_new(phi_hatch, data)  # (I, T)
+            # calculate theta_it = p(t|C_i) matrix
+            theta = self._calc_theta(
+                phi_hatch=phi_hatch,
+                batch=data,
+                ctx_bounds=ctx_bounds,
+            )  # (I, T)
 
             # update p_{ti} - topic probability distribution for i-th context
-            p_ti = self._calc_p_ti(theta_new, data)  # (I, T)
+            # phi_it = p(C_i|t)
+            p_ti, phi_it = self._calc_p_ti(theta, batch=data)  # (I, T)
 
             # update n_{t} - topic probability distribution
             self.n_t = self._calc_n_t(p_ti)  # (T, )
 
-            # update phi (words -> topics) matrix (phi with new p_{ti})
-            phi_new = self._calc_phi(p_ti, data, grad_regularization)  # (W, T)
+            # update phi_wt = p(w|t) matrix
+            phi_new = self._calc_phi(
+                p_ti=p_ti,
+                batch=data,
+                grad_regularization=grad_regularization,
+            )  # (W, T)
 
             if verbose:
                 diff_norm = jnp.linalg.norm(phi_new - self.phi)
                 print(f'Iteration [{it + 1}/{max_iter}], phi update diff norm: {diff_norm:.04f}')
-                if len(self._metrics) > 0:
-                    print('Metrics:')
-                    theta_doc = theta_new.reshape(data.shape + (-1, )).sum(axis=1)  # (D, T)
-                    for tag, metric in self._metrics.items():
-                        value = metric(phi_new, theta_doc)
-                        print(f'\t{tag}: {value:.04f}')
+                self._calc_metrics(phi_it, phi_new, theta)
 
             self.phi = phi_new
             if diff_norm < tol:

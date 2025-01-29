@@ -8,9 +8,6 @@ from nltk.stem import WordNetLemmatizer
 
 
 class ArticlesDataset():
-    UNK_TOKEN = 'UNK'
-    PAD_TOKEN = 'PAD'
-
     @staticmethod
     def preprocess_text(text: str) -> list[str]:
         text = text.lower()  # lower characters
@@ -26,48 +23,35 @@ class ArticlesDataset():
 
     @classmethod
     def create_vocab(cls, texts: list[list[str]]) -> dict:
-        vocab = {
-            cls.UNK_TOKEN: 0,
-            cls.PAD_TOKEN: 1,
-        }
+        vocab = dict()
         for text in texts:
             for word in text:
                 vocab[word] = vocab.get(word, len(vocab))
         return vocab
 
     @property
-    def unk_token_id(self):
-        return self.vocab[self.UNK_TOKEN]
-
-    @property
-    def pad_token_id(self):
-        return self.vocab[self.PAD_TOKEN]
-
-    @property
     def data(self):
-        return self._data
+        return self._data, self._doc_bounds
 
-    def __init__(self, data: list[str], maxlen: int):
+    def __init__(self, data: list[str]):
         texts_tokenized = []
         for doc in data:
             texts_tokenized.append(self.preprocess_text(doc))
         self.vocab = self.create_vocab(texts_tokenized)
 
-        if maxlen is None:
-            maxlen = max([len(doc) for doc in texts_tokenized])
-        self.maxlen = maxlen
+        self._data = []
+        self._doc_bounds = [0, ]
+        for text in texts_tokenized:
+            for word in text:
+                self._data.append(self.vocab[word])
+            self._doc_bounds.append(len(self._data))
 
-        self._data = np.full((len(texts_tokenized), self.maxlen), fill_value=self.pad_token_id)
-        for text_idx, text in enumerate(texts_tokenized):
-            for word_idx, word in enumerate(text):
-                if word_idx >= self.maxlen:
-                    break
-                self._data[text_idx][word_idx] = self.vocab[word]
-        self._data = jnp.array(self.data)
+        self._data = jnp.array(self._data, dtype=int)
+        self._doc_bounds = jnp.array(self._doc_bounds, dtype=int)
 
     def __len__(self):
-        return len(self.data)
+        return len(self._data)
 
     def __getitem__(self, index) -> jnp.ndarray:
-        tokens = self.data[index]
+        tokens = self._data[index]
         return tokens
