@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 
+from jax import Array
+
 
 class Regularization(ABC):
     """
@@ -22,5 +24,13 @@ class Regularization(ABC):
         return self._tag
 
     @abstractmethod
-    def __call__(self):
+    def _call_impl(self, phi_wt: Array) -> float:
         pass
+
+    def __call__(self, phi_wt: Array) -> float:
+        """
+        Args:
+            phi: matrix of shape (I, T), representing distribution p(w_i|t)
+        """
+        value = self._call_impl(phi_wt)
+        return value
