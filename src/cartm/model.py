@@ -1,5 +1,3 @@
-import numpy as np
-
 import jax
 import jax.numpy as jnp
 
@@ -119,18 +117,19 @@ class ContextTopicModel():
 
     def _get_context_weights_1d(self, gamma: float) -> jax.Array:
         # w_i = gamma * (1 - gamma)**i
-        suffix_context_weights = np.cumprod(np.full(self.ctx_len, (1 - gamma))) * gamma  # (C, )
+        suffix_context_weights = jnp.cumprod(jnp.full(self.ctx_len, (1 - gamma))) * gamma  # (C, )
         prefix_context_weights = suffix_context_weights[::-1]  # (C, )
-        context_weights = np.concatenate([
+        self_context_weight = jnp.array([self._gamma * self._self_aware_context])
+        context_weights = jnp.concatenate([
             prefix_context_weights,
-            [self._gamma * self._self_aware_context],  # whether to ignore the word itself
+            self_context_weight,
             suffix_context_weights,
         ])
         return jnp.array(context_weights)  # (2C + 1, )
 
     def _get_context_weights_2d(self, batch_size: int, attn_bounds: jax.Array) -> jax.Array:
         # True where to attend
-        attn_matrix = np.ones(
+        attn_matrix = jnp.ones(
             shape=(batch_size, self.ctx_len * 2 + 1),
             dtype=bool,
         )  # (I, 2C + 1)
@@ -139,7 +138,7 @@ class ContextTopicModel():
         prefix_bounds = attn_bounds[:-1]  # (B, )
 
         ignored_mask_prefix = jnp.ones((self.ctx_len, self.ctx_len), dtype=bool)  # (C, C)
-        ignored_mask_prefix = jnp.rot90(~np.triu(ignored_mask_prefix))  # (C, C)
+        ignored_mask_prefix = jnp.rot90(~jnp.triu(ignored_mask_prefix))  # (C, C)
         # for broadcasting
         ignored_mask_prefix = jnp.tile(
             ignored_mask_prefix,
@@ -147,21 +146,21 @@ class ContextTopicModel():
         ).T  # (B * C, C)
 
         # context (row) indices where attention mask is needed (the beginning of a new document)
-        shifts = np.ones((len(prefix_bounds), self.ctx_len), dtype=int)  # (B, C)
-        shifts[:, 0] = prefix_bounds
+        shifts = jnp.ones((len(prefix_bounds), self.ctx_len), dtype=int)  # (B, C)
+        shifts = shifts.at[:, 0].set(prefix_bounds)
         shifts = jnp.cumsum(shifts, axis=1)
         shifts = shifts.reshape(-1, 1)  # (B * C, 1)
 
         # words (column) indices in prefix context
         prefix_columns = jnp.arange(self.ctx_len)  # (C, )
 
-        attn_matrix[shifts, prefix_columns] = ignored_mask_prefix
+        attn_matrix = attn_matrix.at[shifts, prefix_columns].set(ignored_mask_prefix)
 
         # suffix attention (ignore words from the next document in context)
         suffix_bounds = attn_bounds[1:] - self.ctx_len  # (B, )
 
         ignored_mask_suffix = jnp.ones((self.ctx_len, self.ctx_len), dtype=bool)  # (C, C)
-        ignored_mask_suffix = jnp.rot90(~np.tril(ignored_mask_suffix))  # (C, C)
+        ignored_mask_suffix = jnp.rot90(~jnp.tril(ignored_mask_suffix))  # (C, C)
         # for broadcasting
         ignored_mask_suffix = jnp.tile(
             ignored_mask_suffix,
@@ -169,15 +168,15 @@ class ContextTopicModel():
         ).T  # (B * C, C)
 
         # context (row) indices where attention mask is needed (the end of a document)
-        shifts = np.ones((len(suffix_bounds), self.ctx_len), dtype=int)  # (B, C)
-        shifts[:, 0] = suffix_bounds
+        shifts = jnp.ones((len(suffix_bounds), self.ctx_len), dtype=int)  # (B, C)
+        shifts = shifts.at[:, 0].set(suffix_bounds)
         shifts = jnp.cumsum(shifts, axis=1)
         shifts = shifts.reshape(-1, 1)  # (B * C, 1)
 
         # words (column) indices in suffix context
         suffix_columns = jnp.arange(self.ctx_len + 1, self.ctx_len * 2 + 1)  # (C, )
 
-        attn_matrix[shifts, suffix_columns] = ignored_mask_suffix
+        attn_matrix = attn_matrix.at[shifts, suffix_columns].set(ignored_mask_suffix)
 
         # calculate context weights with respect to attention and normalize weights
         context_matrix = self._context_weights_1d * attn_matrix  # (I, 2C + 1)
@@ -197,16 +196,15 @@ class ContextTopicModel():
         shifts = jnp.arange(self.ctx_len * 2, -1, -1)  # (2C + 1, )
         max_shift = self.ctx_len * 2 + batch_size
 
-        stacked_tensor = np.full(
+        stacked_tensor = jnp.full(
             (max_shift, self.ctx_len * 2 + 1, self.n_topics),
             fill_value=pad_token,
-            dtype=jnp.float64,
+            dtype=float,
         )  # (I + 2C, 2C + 1, T)
 
         row_indices = jnp.arange(batch_size)[:, None] + shifts[None, :]  # (I, 2C + 1)
         col_indices = jnp.arange(self.ctx_len * 2 + 1)  # (2C + 1)
-
-        stacked_tensor[row_indices, col_indices] = batch[:, None]
+        stacked_tensor = stacked_tensor.at[row_indices, col_indices].set(batch[:, None])
 
         # discard contexts for padding
         pad_context_mask = jnp.all(
@@ -214,6 +212,7 @@ class ContextTopicModel():
             axis=1,
         )  # (I + 2C, )
         stacked_tensor = stacked_tensor[~pad_context_mask]
+
         assert stacked_tensor.shape[0] == batch.shape[0]
         return stacked_tensor  # (I, 2C + 1, T)
 

@@ -1,7 +1,6 @@
 from typing import Literal
 
 import jax.numpy as jnp
-import numpy as np
 from jax import Array
 
 from .metric_base import Metric
@@ -64,9 +63,10 @@ class TopicVarianceMetric(Metric):
 
     def _compute_distance_matrix(self, top_words_per_topic: Array) -> Array:
         n_topics = len(top_words_per_topic)
-        distance_matrix = np.zeros((n_topics, n_topics))
+        distance_matrix = jnp.zeros((n_topics, n_topics))
         for t1 in range(n_topics):
             for t2 in range(t1 + 1, n_topics):
                 dist = self._dist_func(top_words_per_topic[t1], top_words_per_topic[t2])
-                distance_matrix[t1][t2] = distance_matrix[t2][t1] = dist
-        return jnp.array(distance_matrix)
+                distance_matrix = distance_matrix.at[t1, t2].set(dist)
+                distance_matrix = distance_matrix.at[t2, t1].set(dist)
+        return distance_matrix
