@@ -1,7 +1,8 @@
+import re
+
 import jax.numpy as jnp
 from jax import Array
 
-import re
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
@@ -39,7 +40,7 @@ class ArticlesDataset:
 
     @classmethod
     def create_vocab(cls, texts: list[list[str]]) -> dict:
-        vocab = dict()
+        vocab = {}
         for text in texts:
             for word in text:
                 vocab[word] = vocab.get(word, len(vocab))
@@ -70,8 +71,20 @@ class BatchLoader:
 
             data_batch = data[start_idx:end_idx]
             bounds_batch_mask = (doc_bounds >= start_idx) & (doc_bounds < end_idx)
-            doc_bounds_batch = doc_bounds[bounds_batch_mask]
+            doc_bounds_batch = doc_bounds[bounds_batch_mask].copy()
             doc_bounds_batch -= start_idx  # absolute bounds to batch-relative bounds
+
+            # add bounds at the beginning and ending of the batch
+            if len(doc_bounds_batch) == 0 or doc_bounds_batch[0] != 0:
+                doc_bounds_batch = jnp.concatenate([
+                    jnp.array([0]),
+                    doc_bounds_batch,
+                ], dtype=int)
+            if doc_bounds_batch[-1] != self.batch_size:
+                doc_bounds_batch = jnp.concatenate([
+                    doc_bounds_batch,
+                    jnp.array([end_idx - start_idx]),
+                ], dtype=int)
 
             self._batches.append((data_batch, doc_bounds_batch))
 
