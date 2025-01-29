@@ -11,15 +11,16 @@ class ContextTopicModel():
     """
 
     def __init__(
-        self,
-        vocab_size: int,
-        ctx_len: int,
-        n_topics: int = 10,
-        gamma: float = 0.6,
-        self_aware_context: bool = False,
-        regularizers: list = None,
-        metrics: list = None,
-        eps: float = 1e-12,
+            self,
+            vocab_size: int,
+            ctx_len: int,
+            *,
+            n_topics: int = 10,
+            gamma: float = 0.6,
+            self_aware_context: bool = False,
+            regularizers: list = None,
+            metrics: list = None,
+            eps: float = 1e-12,
     ):
         """
         Args:
@@ -42,33 +43,35 @@ class ContextTopicModel():
         self._gamma = gamma
         self._self_aware_context = self_aware_context
         self._eps = eps
+        self.phi = None
+        self.n_t = None
 
         self._context_weights_1d = self._get_context_weights_1d(self._gamma)
 
-        self._regularizations = dict()
+        self._regularizations = {}
         if regularizers is not None:
-            for reg in regularizers:
-                self.add_regularization(reg)
-        
-        self._metrics = dict()
+            for regularization in regularizers:
+                self.add_regularization(regularization)
+
+        self._metrics = {}
         if metrics is not None:
             for metric in metrics:
                 self.add_metric(metric)
 
-    def add_regularization(self, reg: reg.Regularization):
+    def add_regularization(self, regularization: reg.Regularization):
         """
         Add a regularization to the model.
 
         Note:
         - `reg` has to be a child of base `Regularization` class
         """
-        if not isinstance(reg, reg.Regularization):
+        if not isinstance(regularization, reg.Regularization):
             raise TypeError(
-                f'Regularization [{reg.__name__}] has to be a subclass of '
-                f'the Regularization base class, got type {type(reg)}'
+                f'Regularization [{regularization.__name__}] has to be a subclass of '
+                f'the Regularization base class, got type {type(regularization)}'
             )
 
-        self._regularizations[reg.tag] = reg
+        self._regularizations[regularization.tag] = regularization
 
     def add_metric(self, metric: mtc.Metric):
         """
@@ -272,8 +275,8 @@ class ContextTopicModel():
 
     def _compose_regularizations(self):
         regs = self._regularizations.values()
-        sum_reg = lambda x: sum([1.0, ] + [reg(x) for reg in regs])
-        return jax.jit(jax.grad(sum_reg))
+        reg_grad = jax.grad(lambda x: sum([1.0, ] + [reg(x) for reg in regs]))
+        return jax.jit(reg_grad)
 
     def _calc_metrics(self, phi_it: jax.Array, phi_wt: jax.Array, theta: jax.Array):
         if len(self._metrics) == 0:
@@ -285,13 +288,14 @@ class ContextTopicModel():
             print(f'    {tag}: {value:.04f}')
 
     def fit(
-        self,
-        data: jax.Array,
-        ctx_bounds: jax.Array,
-        max_iter: int = 1000,
-        tol: float = 1e-3,
-        verbose: bool = False,
-        seed: int = 0,
+            self,
+            data: jax.Array,
+            ctx_bounds: jax.Array,
+            *,
+            max_iter: int = 1000,
+            tol: float = 1e-3,
+            verbose: bool = False,
+            seed: int = 0,
     ):
         """
         Fit the model with the corpus of documents.

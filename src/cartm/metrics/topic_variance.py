@@ -38,7 +38,11 @@ class TopicVarianceMetric(Metric):
         self._eps = eps
 
     def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array = None) -> float:
-        top_words_per_topic = jnp.argpartition(phi_wt, -self.top_k, axis=0)[-self.top_k:]  # (W_k, T)
+        top_words_per_topic = jnp.argpartition(
+            phi_wt,
+            -self.top_k,
+            axis=0,
+        )[-self.top_k:]  # (W_k, T)
         dist_matrix = self._compute_distance_matrix(top_words_per_topic)  # (T, T)
         dist_matrix += jnp.diag(jnp.full(len(dist_matrix), jnp.inf))  # add inf to diagonal
         min_dist_per_topic = dist_matrix.min(axis=0)
