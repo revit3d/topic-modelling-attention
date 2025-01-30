@@ -1,3 +1,5 @@
+from functools import partial
+
 import jax
 import jax.numpy as jnp
 
@@ -108,8 +110,8 @@ class ContextTopicModel():
                 f'Did you mean to use remove_regularization?'
             )
 
+    @partial(jax.jit, static_argnums=0)
     def _norm(self, x: jax.Array) -> jax.Array:
-        assert jnp.any(~jnp.isnan(x))
         # take x+ = max(x, 0) element-wise (perform projection on positive simplex)
         x = jnp.maximum(x, jnp.zeros_like(x))
         # normalize values in non-zero rows to 1
@@ -118,6 +120,7 @@ class ContextTopicModel():
         x = jnp.where(norm > self._eps, x / norm, jnp.zeros_like(x))
         return x
 
+    @partial(jax.jit, static_argnums=(0, 1))
     def _get_context_weights_1d(self, gamma: float) -> jax.Array:
         # w_i = gamma * (1 - gamma)**i
         suffix_context_weights = jnp.cumprod(jnp.full(self.ctx_len, (1 - gamma))) * gamma  # (C, )
@@ -130,8 +133,9 @@ class ContextTopicModel():
         ])
         return jnp.array(context_weights)  # (2C + 1, )
 
-    def _get_context_weights_2d(self, batch_size: int, attn_bounds: jax.Array) -> jax.Array:
-        assert len(attn_bounds) > 0 and attn_bounds[0] == 0 and attn_bounds[-1] == batch_size
+    @partial(jax.jit, static_argnums=0)
+    def _get_context_weights_2d(self, batch: jax.Array, attn_bounds: jax.Array) -> jax.Array:
+        batch_size = batch.shape[0]
 
         # True where to attend
         attn_matrix = jnp.ones(
@@ -188,6 +192,7 @@ class ContextTopicModel():
         context_matrix = self._norm(context_matrix.T).T
         return context_matrix  # (I, 2C + 1)
 
+    @partial(jax.jit, static_argnums=0)
     def _get_context_tensor(self, batch: jax.Array) -> jax.Array:
         """
         Stacks 2d-data into a 3d-tensor along a new (context) axis,
@@ -197,69 +202,67 @@ class ContextTopicModel():
         batch_size = batch.shape[0]
         pad_token = -1  # assuming we don't have negative tokens in vocabulary
 
-        # shift for each 2d "slice" of data
-        shifts = jnp.arange(self.ctx_len * 2, -1, -1)  # (2C + 1, )
+        # shifts for rolling the batch along new dimension
+        shifts = jnp.arange(0, -2 * self.ctx_len - 1, -1)  # (2C + 1, )
+
+        # pad batch for shifting
         max_shift = self.ctx_len * 2 + batch_size
-
-        stacked_tensor = jnp.full(
-            (max_shift, self.ctx_len * 2 + 1, self.n_topics),
+        padded_batch = jnp.full(
+            (max_shift, self.n_topics), 
             fill_value=pad_token,
-            dtype=float,
-        )  # (I + 2C, 2C + 1, T)
+            dtype=batch.dtype,
+        )  # (I + 2C, T)
+        padded_batch = padded_batch.at[self.ctx_len:self.ctx_len + batch_size].set(batch)
 
-        row_indices = jnp.arange(batch_size)[:, None] + shifts[None, :]  # (I, 2C + 1)
-        col_indices = jnp.arange(self.ctx_len * 2 + 1)  # (2C + 1)
-        stacked_tensor = stacked_tensor.at[row_indices, col_indices].set(batch[:, None])
+        # rolling and clipping each "slice" of batch
+        def shift_batch(shift):
+            return jnp.roll(padded_batch, shift, axis=0)[:batch_size]
 
-        # discard contexts for padding
-        pad_context_mask = jnp.all(
-            jnp.isclose(stacked_tensor[:, self.ctx_len, :], pad_token),
-            axis=1,
-        )  # (I + 2C, )
-        stacked_tensor = stacked_tensor[~pad_context_mask]
-
-        assert stacked_tensor.shape[0] == batch_size, f'{stacked_tensor.shape[0]}, {batch_size}'
+        # apply vmap over all shifts
+        stacked_tensor = jax.vmap(shift_batch)(shifts).transpose(1, 0, 2)
         return stacked_tensor  # (I, 2C + 1, T)
 
-    def _calc_phi_hatch(self) -> jax.Array:
-        return self._norm(self.phi.T * self.n_t[:, None]).T  # (W, T)
+    @partial(jax.jit, static_argnums=0)
+    def _calc_phi_hatch(self, phi: jax.Array, n_t: jax.Array) -> jax.Array:
+        return self._norm(phi.T * n_t[:, None]).T  # (W, T)
 
+    @partial(jax.jit, static_argnums=0)
     def _calc_theta(
             self,
             phi_hatch: jax.Array,
             batch: jax.Array,
             ctx_bounds: jax.Array,
     ) -> jax.Array:
-        batch_size = batch.shape[0]
-
         phi_it_hatch = jnp.take_along_axis(
             phi_hatch,
             indices=batch[:, None],
             axis=0,
         )  # (I, T)
         phi_it_hatch_with_context = self._get_context_tensor(phi_it_hatch)  # (I, 2C + 1, T)
-
         context_matrix = self._get_context_weights_2d(
-            batch_size=batch_size,
+            batch=batch,
             attn_bounds=ctx_bounds,
         )  # (I, 2C + 1)
         theta_it = context_matrix[..., None] * phi_it_hatch_with_context  # (I, 2C + 1, T)
         theta_it = jnp.sum(theta_it, axis=1)  # (I, T)
         return theta_it
 
+    @partial(jax.jit, static_argnums=0)
     def _calc_p_ti(
             self,
+            phi: jax.Array,
             theta: jax.Array,
             batch: jax.Array
     ) -> tuple[jax.Array, jax.Array]:
         phi_it = jnp.take_along_axis(
-            self.phi,
+            phi,
             indices=batch[:, None],
             axis=0,
         )  # (I, T)
         p_ti = self._norm((phi_it * theta).T).T  # (I, T)
         return p_ti, phi_it
 
+    @partial(jax.jit, static_argnums=0)
     def _calc_n_t(self, p_ti: jax.Array) -> jax.Array:
         return jnp.sum(p_ti, axis=0)  # (T, )
 
@@ -300,7 +303,7 @@ class ContextTopicModel():
             grad_reg: callable
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         # calculate phi' (words -> topics) matrix (phi with old p_{ti})
-        phi_hatch = self._calc_phi_hatch()  # (W, T)
+        phi_hatch = self._calc_phi_hatch(phi=self.phi, n_t=self.n_t)  # (W, T)
 
         # calculate theta_it = p(t|C_i) matrix
         theta = self._calc_theta(
@@ -311,10 +314,14 @@ class ContextTopicModel():
 
         # update p_{ti} - topic probability distribution for i-th context
         # phi_it = p(C_i|t)
-        p_ti, phi_it = self._calc_p_ti(theta, batch=batch)  # (I, T)
+        p_ti, phi_it = self._calc_p_ti(
+            phi=self.phi,
+            theta=theta,
+            batch=batch,
+        )  # (I, T)
 
         # update n_{t} - topic probability distribution
-        self.n_t = self._calc_n_t(p_ti)  # (T, )
+        self.n_t = self._calc_n_t(p_ti=p_ti)  # (T, )
 
         # update phi_wt = p(w|t) matrix
         phi_new = self._calc_phi(
