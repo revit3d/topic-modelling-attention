@@ -8,7 +8,7 @@ from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
 
 
-class ArticlesDataset:
+class Dataset:
     def __init__(self, data: list[str]):
         texts_tokenized = []
         for doc in data:
