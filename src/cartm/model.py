@@ -1,4 +1,5 @@
 from functools import partial
+from typing import Sequence, Callable
 
 import jax
 import jax.numpy as jnp
@@ -133,18 +134,18 @@ class ContextTopicModel():
         ])
         return jnp.array(context_weights)  # (2C + 1, )
 
-    @partial(jax.jit, static_argnums=0)
+    # @partial(jax.jit, static_argnums=0)
     def _get_context_weights_2d(self, batch: jax.Array, attn_bounds: jax.Array) -> jax.Array:
         batch_size = batch.shape[0]
 
         # True where to attend
         attn_matrix = jnp.ones(
-            shape=(batch_size, self.ctx_len * 2 + 1),
+            shape=(batch_size + self.ctx_len * 2, self.ctx_len * 2 + 1),
             dtype=bool,
-        )  # (I, 2C + 1)
+        )  # (I + 2C, 2C + 1)
 
         # prefix attention mask (ignore words from the previous document in context)
-        prefix_bounds = attn_bounds[:-1]  # (B, )
+        prefix_bounds = attn_bounds[:-1] + self.ctx_len  # (B, )
 
         ignored_mask_prefix = jnp.ones((self.ctx_len, self.ctx_len), dtype=bool)  # (C, C)
         ignored_mask_prefix = jnp.rot90(~jnp.triu(ignored_mask_prefix))  # (C, C)
@@ -166,7 +167,7 @@ class ContextTopicModel():
         attn_matrix = attn_matrix.at[shifts, prefix_columns].set(ignored_mask_prefix)
 
         # suffix attention (ignore words from the next document in context)
-        suffix_bounds = attn_bounds[1:] - self.ctx_len  # (B, )
+        suffix_bounds = attn_bounds[1:]  # (B, )
 
         ignored_mask_suffix = jnp.ones((self.ctx_len, self.ctx_len), dtype=bool)  # (C, C)
         ignored_mask_suffix = jnp.rot90(~jnp.tril(ignored_mask_suffix))  # (C, C)
@@ -185,7 +186,11 @@ class ContextTopicModel():
         # words (column) indices in suffix context
         suffix_columns = jnp.arange(self.ctx_len + 1, self.ctx_len * 2 + 1)  # (C, )
 
-        attn_matrix = attn_matrix.at[shifts, suffix_columns].set(ignored_mask_suffix)
+        # apply mask in reverse order
+        attn_matrix = attn_matrix.at[shifts[::-1], suffix_columns].set(ignored_mask_suffix[::-1])
+
+        # remove padding
+        attn_matrix = attn_matrix[self.ctx_len:-self.ctx_len]  # (I, 2C + 1)
 
         # calculate context weights with respect to attention and normalize weights
         context_matrix = self._context_weights_1d * attn_matrix  # (I, 2C + 1)
@@ -208,7 +213,7 @@ class ContextTopicModel():
         # pad batch for shifting
         max_shift = self.ctx_len * 2 + batch_size
         padded_batch = jnp.full(
-            (max_shift, self.n_topics), 
+            (max_shift, self.n_topics),
             fill_value=pad_token,
             dtype=batch.dtype,
         )  # (I + 2C, T)
@@ -226,7 +231,7 @@ class ContextTopicModel():
     def _calc_phi_hatch(self, phi: jax.Array, n_t: jax.Array) -> jax.Array:
         return self._norm(phi.T * n_t[:, None]).T  # (W, T)
 
-    @partial(jax.jit, static_argnums=0)
+    # @partial(jax.jit, static_argnums=0)
     def _calc_theta(
             self,
             phi_hatch: jax.Array,
@@ -268,17 +273,18 @@ class ContextTopicModel():
 
     def _calc_phi(
             self,
-            p_ti: jax.Array,
             batch: jax.Array,
-            grad_reg: callable,
+            phi: jax.Array,
+            p_ti: jax.Array,
+            grad_reg: Callable,
     ) -> jax.Array:
         phi_new = jnp.add.at(
-            jnp.zeros_like(self.phi),
+            jnp.zeros_like(phi),
             batch,
             p_ti,
             inplace=False,
         )  # (W, T)
-        phi_new += self.phi * grad_reg(self.phi)  # (W, T)
+        phi_new += phi * grad_reg(phi)  # (W, T)
         phi_new = self._norm(phi_new)  # (W, T)
         return phi_new
 
@@ -300,7 +306,9 @@ class ContextTopicModel():
             self,
             batch: jax.Array,
             ctx_bounds: jax.Array,
-            grad_reg: callable
+            phi: jax.Array,
+            n_t: jax.Array,
+            grad_reg: Callable,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         # calculate phi' (words -> topics) matrix (phi with old p_{ti})
         phi_hatch = self._calc_phi_hatch(phi=self.phi, n_t=self.n_t)  # (W, T)
@@ -321,21 +329,22 @@ class ContextTopicModel():
         )  # (I, T)
 
         # update n_{t} - topic probability distribution
-        self.n_t = self._calc_n_t(p_ti=p_ti)  # (T, )
+        n_t_new = self._calc_n_t(p_ti=p_ti)  # (T, )
 
         # update phi_wt = p(w|t) matrix
         phi_new = self._calc_phi(
-            p_ti=p_ti,
             batch=batch,
+            phi=phi,
+            p_ti=p_ti,
             grad_reg=grad_reg,
         )  # (W, T)
 
-        return phi_it, phi_new, theta
+        return phi_it, phi_new, theta, n_t_new
 
     def _batched_step_wrapper(
             self,
-            batches: list[tuple[jax.Array, jax.Array]],
-            grad_reg: callable,
+            batches: Sequence[tuple[jax.Array, jax.Array]],
+            grad_reg: Callable,
             lr: float,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         phi_new = self.phi.copy()
@@ -358,7 +367,7 @@ class ContextTopicModel():
 
     def fit(
             self,
-            data: jax.Array | list[tuple[jax.Array, jax.Array]],
+            data: jax.Array | Sequence[tuple[jax.Array, jax.Array]],
             ctx_bounds: jax.Array = None,
             *,
             lr: float = 0.1,
@@ -400,14 +409,14 @@ class ContextTopicModel():
         for it in range(max_iter):
             if ctx_bounds is None:
                 # batched input
-                phi_it, phi_new, theta = self._batched_step_wrapper(
+                phi_it, phi_new, theta, self.n_t = self._batched_step_wrapper(
                     batches=data,
                     grad_reg=grad_regularization,
                     lr=lr,
                 )
             else:
                 # non-batched input
-                phi_it, phi_new, theta = self._step(
+                phi_it, phi_new, theta, self.n_t = self._step(
                     batch=data,
                     ctx_bounds=ctx_bounds,
                     grad_reg=grad_regularization,
