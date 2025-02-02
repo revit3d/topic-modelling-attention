@@ -309,9 +309,9 @@ class ContextTopicModel():
             phi: jax.Array,
             n_t: jax.Array,
             grad_reg: Callable,
-    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         # calculate phi' (words -> topics) matrix (phi with old p_{ti})
-        phi_hatch = self._calc_phi_hatch(phi=self.phi, n_t=self.n_t)  # (W, T)
+        phi_hatch = self._calc_phi_hatch(phi=self.phi, n_t=n_t)  # (W, T)
 
         # calculate theta_it = p(t|C_i) matrix
         theta = self._calc_theta(
@@ -348,22 +348,26 @@ class ContextTopicModel():
             lr: float,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
         phi_new = self.phi.copy()
+        n_t_new = self.n_t.copy()
         phi_it = []
         theta = []
 
         for batch, ctx_bounds_batch in batches:
-            phi_it_step, phi_step, theta_step = self._step(
+            phi_it_step, phi_step, theta_step, n_t_step = self._step(
                 batch=batch,
                 ctx_bounds=ctx_bounds_batch,
+                phi=self.phi,
+                n_t=self.n_t,
                 grad_reg=grad_reg,
             )
             phi_new = phi_new * (1 - lr) + phi_step * lr
+            n_t_new = n_t_new * (1 - lr) + n_t_step * lr
             phi_it.append(phi_it_step)
             theta.append(theta_step)
 
         phi_it = jnp.concatenate(phi_it).reshape(-1, self.n_topics)
         theta = jnp.concatenate(theta).reshape(-1, self.n_topics)
-        return phi_it, phi_new, theta
+        return phi_it, phi_new, theta, n_t_new
 
     def fit(
             self,
@@ -419,6 +423,8 @@ class ContextTopicModel():
                 phi_it, phi_new, theta, self.n_t = self._step(
                     batch=data,
                     ctx_bounds=ctx_bounds,
+                    phi=self.phi,
+                    n_t=self.n_t,
                     grad_reg=grad_regularization,
                 )
 

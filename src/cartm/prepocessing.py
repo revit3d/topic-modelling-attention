@@ -54,7 +54,7 @@ class DatasetPreprocessor:
     ) -> dict:
         """
         Learn a vocabulary dictionary of all tokens in the raw documents.
-        
+
         Args:
             data: a sequence of strings.
         """
