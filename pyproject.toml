@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "topic-modelling-attention"
+name = "cartm"
 version = "0.1.0"
 description = "Topic modelling with attention-based approach"
 authors = ["Diyakov Ilya <s02210378@gse.cs.msu.ru>"]

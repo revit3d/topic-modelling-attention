@@ -26,21 +26,24 @@ jobs:
     - name: Install Poetry
       run: |
         curl -sSL https://install.python-poetry.org | python3 -
-        echo "${{ runner.tool_cache }}/poetry/bin" >> $GITHUB_PATH
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
 
     - name: Install dependencies
-      run: poetry install
+      run:
+        poetry install --with test
+      env:
+        POETRY_NO_INTERACTION: 1
 
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
-        flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        poetry run flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings
-        flake8 src/ --count --max-complexity=10 --max-line-length=100 --statistics
+        poetry run flake8 src/ --count --max-complexity=10 --max-line-length=100 --statistics
 
     - name: Lint with pylint
       run: |
-        pylint src/ \
+        poetry run pylint src/ \
           --max-line-length=100 \
           --disable="C0103,C0114,C0115" \
           --fail-under 8.0 \
