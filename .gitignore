@@ -26,7 +26,6 @@ tokenizer_data/
 .installed.cfg
 *.egg
 MANIFEST
-poetry.lock
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -165,3 +164,7 @@ cython_debug/
 
 # local data
 data/
+experiments-*.ipynb
+
+# VSCode configuration
+.vscode
