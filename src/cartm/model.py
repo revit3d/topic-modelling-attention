@@ -293,14 +293,22 @@ class ContextTopicModel():
         reg_grad = jax.grad(lambda x: sum([1.0, ] + [reg(x) for reg in regs]))
         return jax.jit(reg_grad)
 
-    def _calc_metrics(self, phi_it: jax.Array, phi_wt: jax.Array, theta: jax.Array):
+    def _calc_metrics(
+            self,
+            phi_it: jax.Array,
+            phi_wt: jax.Array,
+            theta: jax.Array,
+            verbose: int,
+    ):
         if len(self._metrics) == 0:
             return
 
-        print('  Metrics:')
+        if verbose > 1:
+            print('  Metrics:')
         for tag, metric in self._metrics.items():
             value = metric(phi_it=phi_it, phi_wt=phi_wt, theta=theta)
-            print(f'    {tag}: {value:.04f}')
+            if verbose > 1:
+                print(f'    {tag}: {value:.04f}')
 
     def _step(
             self,
@@ -428,11 +436,16 @@ class ContextTopicModel():
                     grad_reg=grad_regularization,
                 )
 
+            diff_norm = jnp.linalg.norm(phi_new - self.phi)
             if verbose > 0:
-                diff_norm = jnp.linalg.norm(phi_new - self.phi)
                 print(f'Iteration [{it + 1}/{max_iter}], phi update diff norm: {diff_norm:.04f}')
-                if verbose > 1:
-                    self._calc_metrics(phi_it, phi_new, theta)
+
+            self._calc_metrics(
+                phi_it=phi_it,
+                phi_wt=phi_new,
+                theta=theta,
+                verbose=verbose,
+            )
 
             self.phi = phi_new
             if diff_norm < tol:
