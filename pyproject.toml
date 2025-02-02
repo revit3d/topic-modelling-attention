@@ -7,16 +7,22 @@ license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = ">=3.12"
-torch = "^2.5.1"
+python = "^3.10"
+nltk = "^3.9.1"
+jax = "^0.4.38"
+
+
+[tool.poetry.group.dev.dependencies]
 pandas = "^2.2.3"
 seaborn = "^0.13.2"
 ipykernel = "^6.29.5"
-nltk = "^3.9.1"
-jax = "^0.4.38"
-scikit-learn = "^1.6.0"
-pytest = "^8.3.4"
+scikit-learn = "^1.6.1"
 
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.3.4"
+flake8 = "^7.1.1"
+pylint = "^3.3.4"
 
 [build-system]
 requires = ["poetry-core"]
