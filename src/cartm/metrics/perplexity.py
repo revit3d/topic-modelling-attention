@@ -8,8 +8,8 @@ class PerplexityMetric(Metric):
     def __init__(self, tag: str = None, eps: float = 1e-12):
         """
         Args:
-            data: tokenized corpus
-            tag: metric's name to be displayed in logs
+            tag: metric's name to be displayed in logs.
+            eps: parameter used for numerical stability.
         """
         if tag is None:
             tag = self.__class__.__name__

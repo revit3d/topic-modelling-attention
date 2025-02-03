@@ -14,9 +14,10 @@ class CoherenceMetric(Metric):
     ):
         """
         Args:
-            data: bag of words with shape (D, W), fitted on the corpus
-            top_k: number of top words to calculate pmi
-            tag: metric's name to be displayed in logs
+            data: bag of words with shape (D, W), fitted on the corpus.
+            top_k: number of top words to calculate pmi.
+            tag: metric's name to be displayed in logs.
+            eps: parameter used for numerical stability.
         """
         if tag is None:
             tag = self.__class__.__name__
