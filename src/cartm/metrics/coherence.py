@@ -1,3 +1,6 @@
+from functools import partial
+
+import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -28,6 +31,7 @@ class CoherenceMetric(Metric):
         self.top_k = top_k
         self._eps = eps
 
+    @partial(jax.jit, static_argnums=0)
     def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array):
         top_words_per_topic = jnp.argpartition(
             phi_wt,
