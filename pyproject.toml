@@ -17,12 +17,21 @@ pandas = "^2.2.3"
 seaborn = "^0.13.2"
 ipykernel = "^6.29.5"
 scikit-learn = "^1.6.1"
+numpy = "^2.2.2"
 
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.3.4"
 flake8 = "^7.1.1"
 pylint = "^3.3.4"
+numpy = "^2.2.2"
+
+
+[tool.poetry.group.examples.dependencies]
+seaborn = "^0.13.2"
+ipykernel = "^6.29.5"
+scikit-learn = "^1.6.1"
+numpy = "^2.2.2"
 
 [build-system]
 requires = ["poetry-core"]
