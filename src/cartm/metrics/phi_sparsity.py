@@ -8,7 +8,8 @@ class SparsityMetric(Metric):
     def __init__(self, tag: str = None, eps: float = 1e-12):
         """
         Args:
-            eps: value counts as non-zero if value > eps
+            tag: metric's name to be displayed in logs.
+            eps: value counts as non-zero if value >= eps.
         """
         if tag is None:
             tag = self.__class__.__name__
@@ -18,5 +19,5 @@ class SparsityMetric(Metric):
 
     def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array) -> float:
         num_zeros = jnp.sum(jnp.abs(phi_wt) < self.eps)
-        num_elems = jnp.prod(phi_wt.shape)
+        num_elems = phi_wt.shape[0] * phi_wt.shape[1]
         return num_zeros / num_elems
