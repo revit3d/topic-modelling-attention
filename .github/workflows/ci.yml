@@ -30,7 +30,7 @@ jobs:
 
     - name: Install dependencies
       run:
-        poetry install --with test
+        poetry install --with test && poetry run download-nltk-data
       env:
         POETRY_NO_INTERACTION: 1
 

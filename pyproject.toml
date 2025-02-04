@@ -33,6 +33,10 @@ ipykernel = "^6.29.5"
 scikit-learn = "^1.6.1"
 numpy = "^2.2.2"
 
+
+[tool.poetry.scripts]
+download-nltk-data = "src.install:download_nltk_data"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
