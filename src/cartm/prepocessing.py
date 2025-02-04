@@ -1,12 +1,12 @@
 import re
-from typing import Sequence, Callable
+from typing import Sequence, Callable, Iterable
 
 import jax.numpy as jnp
 from jax import Array
 
+from nltk import word_tokenize
 from nltk.corpus import stopwords as default_stopwords
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
+from nltk.stem import PorterStemmer
 
 
 class DatasetPreprocessor:
@@ -15,9 +15,9 @@ class DatasetPreprocessor:
             *,
             lower: bool = True,
             vocabulary: dict = None,
-            preprocessor: Callable = None,
-            tokenizer: Callable = None,
-            stopwords: list | set = None,
+            preprocessor: Callable[[str], str] = None,
+            tokenizer: Callable[[str], list[str]] = None,
+            stopwords: Iterable[str] = None,
     ):
         """
         Convert sequence of raw documents into a sequence of tokens
@@ -34,19 +34,30 @@ class DatasetPreprocessor:
         """
         self._lower = lower
         self._vocab = vocabulary
-        self._preprocessor = preprocessor
         self._data = None
         self._doc_bounds = None
 
-        if tokenizer is None:
-            self._tokenizer = word_tokenize
-        else:
-            self._tokenizer = tokenizer
+        if preprocessor is not None and not callable(preprocessor):
+            raise TypeError(
+                f'Preprocessor should be callable if provided, '
+                f'got type {type(preprocessor)}.'
+            )
+        self._preprocessor = preprocessor
+
+        if tokenizer is not None and not callable(tokenizer):
+            raise TypeError(
+                f'Tokenizer should be callable if provided, '
+                f'got type {type(tokenizer)}.'
+            )
+        self._tokenizer = tokenizer
 
         if stopwords is None:
             self._stopwords = set(default_stopwords.words("english"))
         else:
-            self._stopwords = set(stopwords)
+            try:
+                self._stopwords = set(stopwords)
+            except TypeError:
+                raise
 
     def fit(
             self,
@@ -62,7 +73,7 @@ class DatasetPreprocessor:
         for doc in data:
             texts_tokenized.append(self._preprocess_text(doc))
         self._vocab = self._create_vocabulary(texts_tokenized)
-        return self._vocab
+        return self.vocabulary
 
     def fit_transform(
             self,
@@ -90,8 +101,7 @@ class DatasetPreprocessor:
         self._data = []
         self._doc_bounds = [0, ]
         for text in texts_tokenized:
-            for word in text:
-                self._data.append(self._vocab[word])
+            self._data.extend([self._vocab[word] for word in text])
             self._doc_bounds.append(len(self._data))
 
         self._data = jnp.array(self._data, dtype=int)
@@ -102,32 +112,35 @@ class DatasetPreprocessor:
         return self._data
 
     def _preprocess_text(self, text: str) -> list[str]:
-        """Apply preprocessing and tokenizing to a single document."""
-        if self._lower:
-            text = text.lower()
-
+        """Apply preprocessing and tokenization to a single document."""
+        # preprocessing stage
         if self._preprocessor is None:
-            text = re.sub(r'[^a-z]', ' ', text)
+            if self._lower:
+                text = text.lower()
+                text = re.sub(r'[^a-z]', ' ', text)
+            else:
+                text = re.sub(r'[^A-Za-z]', ' ', text)
         else:
             text = self._preprocessor(text)
 
-        text_tokenized = self._tokenizer(text)
+        # tokenization stage
+        if self._tokenizer is None:
+            text_tokenized = word_tokenize(text)
+            stemmer = PorterStemmer()
+            text_tokenized = [stemmer.stem(token) for token in text_tokenized]
+        else:
+            text_tokenized = self._tokenizer(text)
 
-        lemmatizer = WordNetLemmatizer()
-        text_tokenized = [lemmatizer.lemmatize(word) for word in text_tokenized]
-
+        # removing stopwords
         text_tokenized = [word for word in text_tokenized if word not in self._stopwords]
 
         return text_tokenized
 
-    @classmethod
-    def _create_vocabulary(cls, texts: list[list[str]]) -> dict:
+    @staticmethod
+    def _create_vocabulary(texts: list[list[str]]) -> dict:
         """Create vocabulary from all unique terms in tokenized corpus."""
-        _vocab = {}
-        for text in texts:
-            for word in text:
-                _vocab[word] = _vocab.get(word, len(_vocab))
-        return _vocab
+        unique_words = {word for text in texts for word in text}
+        return {word: token for token, word in enumerate(unique_words)}
 
     @property
     def vocabulary(self):
