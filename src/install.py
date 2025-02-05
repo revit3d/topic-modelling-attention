@@ -2,6 +2,7 @@ import nltk
 
 
 def download_nltk_data():
+    """Download necessary nltk data for correct preprocessing."""
     nltk_resources = [
         'punkt_tab',
         'stopwords',
