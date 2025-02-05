@@ -6,6 +6,8 @@ import numpy as np
 from numpy.testing import assert_allclose
 
 from cartm.model import ContextTopicModel
+import cartm.metrics as mtc
+import cartm.regularization as reg
 
 
 vocab_size = 20
@@ -262,3 +264,48 @@ def test_phi(model, phi, n_t, data, doc_bounds):
     phi_primitive = calc_phi_primitive(data=data, p_ti=p_ti)
     phi_model = model._calc_phi(batch=data, phi=phi, p_ti=p_ti, grad_reg=grad_reg)
     assert_allclose(phi_model, phi_primitive)
+
+
+def test_add_remove_metric(model):
+    metric = mtc.PerplexityMetric()
+    model.add_metric(metric=metric)
+
+    assert len(model._metrics) == 1
+
+    model.remove_metric(tag=metric.tag)
+
+    assert len(model._metrics) == 0
+
+
+def test_calc_metric(model):
+    metric = mtc.PerplexityMetric()
+    model.add_metric(metric=metric)
+    phi_it = jnp.zeros((n_words, n_topics))
+    theta = jnp.zeros((n_words, n_topics))
+    model._calc_metrics(phi_it=phi_it, phi_wt=None, theta=theta, verbose=False)
+
+    assert len(metric.history) == 1
+
+
+def test_add_remove_regularization(model):
+    regularization = reg.DecorrelationRegularization(tau=0.3)
+    model.add_regularization(regularization=regularization)
+
+    assert len(model._regularizations) == 1
+
+    model.remove_regularization(regularization.tag)
+
+    assert len(model._regularizations) == 0
+
+
+def test_compose_regularizations(model, phi):
+    regularization1 = reg.DecorrelationRegularization(tau=0.1, tag='reg1')
+    regularization2 = reg.DecorrelationRegularization(tau=0.6, tag='reg2')
+    model.add_regularization(regularization=regularization1)
+    model.add_regularization(regularization=regularization2)
+
+    reg1_grad = jax.grad(regularization1)
+    reg2_grad = jax.grad(regularization2)
+    reg_grad = model._compose_regularizations()
+
+    assert_allclose(reg_grad(phi), reg1_grad(phi) + reg2_grad(phi), rtol=5e-7)
