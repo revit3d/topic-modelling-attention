@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Sequence, Callable
+from typing import Iterable, Callable
 
 import jax
 import jax.numpy as jnp
@@ -10,7 +10,7 @@ from . import metrics as mtc
 
 class ContextTopicModel():
     """
-    Topic model which uses local context of words
+    Topic model which uses local context of words.
     """
 
     def __init__(
@@ -27,18 +27,18 @@ class ContextTopicModel():
     ):
         """
         Args:
-            vocab_size: corpus vocabulary size, W
-            ctx_len: one-sided context size, C
-            n_topics: number of topics, T
-            gamma: parameter used for calculating weights of the word embeddings in the context
-            self_aware_context: whether to use the word itself in its context
-            regularizers: list of regularizations (see `add_regularization` method)
-            metrics: list of metrics calculated on each step
-            eps: parameter set for balance between numerical stability and precision
+            vocab_size: corpus vocabulary size, W.
+            ctx_len: one-sided context size, C.
+            n_topics: number of topics, T.
+            gamma: parameter used for calculating weights of the word embeddings in the context.
+            self_aware_context: whether to use the word itself in its context.
+            regularizers: list of regularizations (see `add_regularization` method).
+            metrics: list of metrics calculated on each step.
+            eps: parameter set for balance between numerical stability and precision.
 
         Note:
             - Total context of a word on `i`-th index is ctx_len words to the left,\\
-            `ctx_len` words to the right, and the word itself (if `self_aware_context` = True)
+            `ctx_len` words to the right, and the word itself (if `self_aware_context` = True).
         """
         self.ctx_len = ctx_len
         self.vocab_size = vocab_size
@@ -66,7 +66,7 @@ class ContextTopicModel():
         Add a regularization to the model.
 
         Note:
-        - `reg` has to be a child of base `Regularization` class
+        - `reg` has to be a child of base `Regularization` class.
         """
         if not isinstance(regularization, reg.Regularization):
             raise TypeError(
@@ -81,7 +81,7 @@ class ContextTopicModel():
         Add a metric to the model.
 
         Note:
-        - `metric` has to be a child of base `Metric` class
+        - `metric` has to be a child of base `Metric` class.
         """
         if not isinstance(metric, mtc.Metric):
             raise TypeError(
@@ -134,8 +134,13 @@ class ContextTopicModel():
         ])
         return jnp.array(context_weights)  # (2C + 1, )
 
-    # @partial(jax.jit, static_argnums=0)
-    def _get_context_weights_2d(self, batch: jax.Array, attn_bounds: jax.Array) -> jax.Array:
+    @partial(jax.jit, static_argnums=0)
+    def _get_context_weights_2d(
+            self,
+            *,
+            batch: jax.Array,
+            attn_bounds: jax.Array,
+    ) -> jax.Array:
         batch_size = batch.shape[0]
 
         # True where to attend
@@ -198,7 +203,7 @@ class ContextTopicModel():
         return context_matrix  # (I, 2C + 1)
 
     @partial(jax.jit, static_argnums=0)
-    def _get_context_tensor(self, batch: jax.Array) -> jax.Array:
+    def _get_context_tensor(self, *, batch: jax.Array) -> jax.Array:
         """
         Stacks 2d-data into a 3d-tensor along a new (context) axis,
         shifting the data along the new axis. The constructed tensor
@@ -228,12 +233,13 @@ class ContextTopicModel():
         return stacked_tensor  # (I, 2C + 1, T)
 
     @partial(jax.jit, static_argnums=0)
-    def _calc_phi_hatch(self, phi: jax.Array, n_t: jax.Array) -> jax.Array:
+    def _calc_phi_hatch(self, *, phi: jax.Array, n_t: jax.Array) -> jax.Array:
         return self._norm(phi.T * n_t[:, None]).T  # (W, T)
 
-    # @partial(jax.jit, static_argnums=0)
+    @partial(jax.jit, static_argnums=0)
     def _calc_theta(
             self,
+            *,
             phi_hatch: jax.Array,
             batch: jax.Array,
             ctx_bounds: jax.Array,
@@ -243,7 +249,7 @@ class ContextTopicModel():
             indices=batch[:, None],
             axis=0,
         )  # (I, T)
-        phi_it_hatch_with_context = self._get_context_tensor(phi_it_hatch)  # (I, 2C + 1, T)
+        phi_it_hatch_with_context = self._get_context_tensor(batch=phi_it_hatch)  # (I, 2C + 1, T)
         context_matrix = self._get_context_weights_2d(
             batch=batch,
             attn_bounds=ctx_bounds,
@@ -255,6 +261,7 @@ class ContextTopicModel():
     @partial(jax.jit, static_argnums=0)
     def _calc_p_ti(
             self,
+            *,
             phi: jax.Array,
             theta: jax.Array,
             batch: jax.Array
@@ -268,11 +275,13 @@ class ContextTopicModel():
         return p_ti, phi_it
 
     @partial(jax.jit, static_argnums=0)
-    def _calc_n_t(self, p_ti: jax.Array) -> jax.Array:
+    def _calc_n_t(self, *, p_ti: jax.Array) -> jax.Array:
         return jnp.sum(p_ti, axis=0)  # (T, )
 
+    @partial(jax.jit, static_argnums=0, static_argnames='grad_reg')
     def _calc_phi(
             self,
+            *,
             batch: jax.Array,
             phi: jax.Array,
             p_ti: jax.Array,
@@ -295,6 +304,7 @@ class ContextTopicModel():
 
     def _calc_metrics(
             self,
+            *,
             phi_it: jax.Array,
             phi_wt: jax.Array,
             theta: jax.Array,
@@ -310,8 +320,10 @@ class ContextTopicModel():
             if verbose > 1:
                 print(f'    {tag}: {value:.04f}')
 
+    @partial(jax.jit, static_argnums=0, static_argnames='grad_reg')
     def _step(
             self,
+            *,
             batch: jax.Array,
             ctx_bounds: jax.Array,
             phi: jax.Array,
@@ -319,7 +331,7 @@ class ContextTopicModel():
             grad_reg: Callable,
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         # calculate phi' (words -> topics) matrix (phi with old p_{ti})
-        phi_hatch = self._calc_phi_hatch(phi=self.phi, n_t=n_t)  # (W, T)
+        phi_hatch = self._calc_phi_hatch(phi=phi, n_t=n_t)  # (W, T)
 
         # calculate theta_it = p(t|C_i) matrix
         theta = self._calc_theta(
@@ -331,7 +343,7 @@ class ContextTopicModel():
         # update p_{ti} - topic probability distribution for i-th context
         # phi_it = p(C_i|t)
         p_ti, phi_it = self._calc_p_ti(
-            phi=self.phi,
+            phi=phi,
             theta=theta,
             batch=batch,
         )  # (I, T)
@@ -351,12 +363,15 @@ class ContextTopicModel():
 
     def _batched_step_wrapper(
             self,
-            batches: Sequence[tuple[jax.Array, jax.Array]],
+            *,
+            batches: Iterable[tuple[jax.Array, jax.Array]],
+            phi: jax.Array,
+            n_t: jax.Array,
             grad_reg: Callable,
             lr: float,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        phi_new = self.phi.copy()
-        n_t_new = self.n_t.copy()
+        phi_new = phi.copy()
+        n_t_new = n_t.copy()
         phi_it = []
         theta = []
 
@@ -364,8 +379,8 @@ class ContextTopicModel():
             phi_it_step, phi_step, theta_step, n_t_step = self._step(
                 batch=batch,
                 ctx_bounds=ctx_bounds_batch,
-                phi=self.phi,
-                n_t=self.n_t,
+                phi=phi,
+                n_t=n_t,
                 grad_reg=grad_reg,
             )
             phi_new = phi_new * (1 - lr) + phi_step * lr
@@ -379,7 +394,7 @@ class ContextTopicModel():
 
     def fit(
             self,
-            data: jax.Array | Sequence[tuple[jax.Array, jax.Array]],
+            data: jax.Array | Iterable[tuple[jax.Array, jax.Array]],
             ctx_bounds: jax.Array = None,
             *,
             lr: float = 0.1,
@@ -401,8 +416,8 @@ class ContextTopicModel():
             max_iter: max number of iterations.
             tol: early stopping threshold.
             verbose: write logs to stdout on each iteration.
-                0 - silent
-                1 - output general info about iterations
+                0 - silent\n
+                1 - output general info about iterations\n
                 2 - output metric values after each iteration
             seed: random seed.
         """
@@ -423,6 +438,8 @@ class ContextTopicModel():
                 # batched input
                 phi_it, phi_new, theta, self.n_t = self._batched_step_wrapper(
                     batches=data,
+                    phi=self.phi,
+                    n_t=self.n_t,
                     grad_reg=grad_regularization,
                     lr=lr,
                 )
