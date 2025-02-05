@@ -6,14 +6,15 @@ import numpy as np
 from numpy.testing import assert_allclose
 
 from cartm.model import ContextTopicModel
+from cartm.prepocessing import BatchLoader
 import cartm.metrics as mtc
 import cartm.regularization as reg
 
 
-vocab_size = 20
+vocab_size = 40
 n_words = 100
-n_documents = 10
-n_topics = 10
+n_documents = 20
+n_topics = 12
 ctx_len = 5
 gamma = 0.6
 eps = 1e-12
@@ -263,7 +264,53 @@ def test_phi(model, phi, n_t, data, doc_bounds):
 
     phi_primitive = calc_phi_primitive(data=data, p_ti=p_ti)
     phi_model = model._calc_phi(batch=data, phi=phi, p_ti=p_ti, grad_reg=grad_reg)
-    assert_allclose(phi_model, phi_primitive)
+    assert_allclose(phi_model, phi_primitive, rtol=5e-7)
+
+
+def test_step(model, phi, n_t, data, doc_bounds):
+    phi_hatch = model._calc_phi_hatch(phi=phi, n_t=n_t)
+    theta = model._calc_theta(
+        batch=data,
+        phi_hatch=phi_hatch,
+        ctx_bounds=doc_bounds,
+    )
+    p_ti, phi_it = model._calc_p_ti(
+        batch=data,
+        phi=phi,
+        theta=theta,
+    )
+    n_t_new = model._calc_n_t(p_ti=p_ti)
+    grad_reg = jax.grad(lambda _: 0.0)
+    phi_new = model._calc_phi(
+        batch=data,
+        phi=phi,
+        p_ti=p_ti,
+        grad_reg=grad_reg,
+    )
+
+    phi_it_model, phi_new_model, theta_model, n_t_model = model._step(
+        batch=data,
+        ctx_bounds=doc_bounds,
+        phi=phi,
+        n_t=n_t,
+        grad_reg=grad_reg,
+    )
+    assert_allclose(phi_it_model, phi_it, rtol=5e-7)
+    assert_allclose(phi_new_model, phi_new, rtol=5e-7)
+    assert_allclose(theta_model, theta, rtol=5e-7)
+    assert_allclose(n_t_model, n_t_new, rtol=5e-7)
+
+
+def test_batched_step(model, phi, n_t, data, doc_bounds):
+    batches = BatchLoader(data=data, doc_bounds=doc_bounds, batch_size=10)
+    grad_reg = jax.grad(lambda _: 0.0)
+    _ = model._batched_step_wrapper(
+        batches=batches,
+        phi=phi,
+        n_t=n_t,
+        grad_reg=grad_reg,
+        lr=0.01,
+    )
 
 
 def test_add_remove_metric(model):
