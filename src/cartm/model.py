@@ -293,7 +293,7 @@ class ContextTopicModel():
             p_ti,
             inplace=False,
         )  # (W, T)
-        phi_new += phi * grad_reg(phi)  # (W, T)
+        phi_new -= phi * grad_reg(phi)  # (W, T)
         phi_new = self._norm(phi_new)  # (W, T)
         return phi_new
 
