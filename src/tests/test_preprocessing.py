@@ -3,7 +3,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from cartm.prepocessing import DatasetPreprocessor, BatchLoader
+from cartm.preprocessing import DatasetPreprocessor, BatchLoader
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ import numpy as np
 from numpy.testing import assert_allclose
 
 from cartm.model import ContextTopicModel
-from cartm.prepocessing import BatchLoader
+from cartm.preprocessing import BatchLoader
 import cartm.metrics as mtc
 import cartm.regularization as reg
 
