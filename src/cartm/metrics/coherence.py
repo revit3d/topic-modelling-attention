@@ -33,9 +33,7 @@ class CoherenceMetric(Metric):
             phi_wt,
             kth=-self.top_k,
             axis=0,
-        )[
-            -self.top_k :
-        ]  # (W_k, T)
+        )[-self.top_k:]  # (W_k, T)
         n_docs = self.word_doc_indicator.shape[1]
 
         top_words_per_topic = top_words_per_topic.T  # (T, W_k)

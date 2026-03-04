@@ -205,7 +205,7 @@ class ContextTopicModel:
         )
 
         # remove padding
-        attn_matrix = attn_matrix[self.ctx_len : -self.ctx_len]  # (I, 2C + 1)
+        attn_matrix = attn_matrix[self.ctx_len:-self.ctx_len]  # (I, 2C + 1)
 
         # calculate context weights with respect to attention and normalize weights
         context_matrix = self._context_weights_1d * attn_matrix  # (I, 2C + 1)
@@ -232,7 +232,7 @@ class ContextTopicModel:
             fill_value=pad_token,
             dtype=batch_matrix.dtype,
         )  # (I + 2C, T)
-        padded_batch = padded_batch.at[self.ctx_len : self.ctx_len + batch_size].set(
+        padded_batch = padded_batch.at[self.ctx_len:self.ctx_len + batch_size].set(
             batch_matrix
         )
 

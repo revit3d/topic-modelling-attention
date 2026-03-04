@@ -125,7 +125,7 @@ def calc_coherence_primitive(bow: jax.Array, phi_wt: jax.Array):
         topic_coherence = 0.0
         n_pairs = 0
         for i, w1 in enumerate(topk_indices):
-            for w2 in topk_indices[i + 1 :]:
+            for w2 in topk_indices[i + 1:]:
                 assert word_counts[w1] != 0 and word_counts[w2] != 0
                 p_w1_w2 = pair_counts[w1][w2] / n_documents
                 p_w1 = word_counts[w1] / n_documents

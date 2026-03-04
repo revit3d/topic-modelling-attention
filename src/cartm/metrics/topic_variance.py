@@ -52,7 +52,7 @@ class TopicVarianceMetric(Metric):
             top_words_per_topic = jnp.argpartition(
                 phi_wt, -self.top_k, axis=0
             )  # (W, T)
-            top_words_per_topic = top_words_per_topic[-self.top_k :].T  # (T, W_k)
+            top_words_per_topic = top_words_per_topic[-self.top_k:].T  # (T, W_k)
             W, T = phi_wt.shape
             topic_vectors = jnp.zeros((T, W), dtype=bool)  # (T, W)
             topic_vectors = topic_vectors.at[
