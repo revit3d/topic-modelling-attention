@@ -7,7 +7,6 @@ from numpy.testing import assert_almost_equal
 
 import cartm.metrics as mtc
 
-
 vocab_size = 20
 n_words = 100
 n_documents = 10
@@ -18,7 +17,7 @@ seed = 42
 
 
 def calc_perplexity_primitive(phi_it: jax.Array, theta: jax.Array):
-    p_i = np.zeros((n_words, ))
+    p_i = np.zeros((n_words,))
     for i in range(n_words):
         for t in range(n_topics):
             p_i[i] += phi_it[i][t] * theta[i][t]
@@ -57,12 +56,12 @@ def calc_cosine_primitive(phi_wt: jax.Array, t1: int, t2: int):
 
     denominator_t1 = 0.0
     for w in range(vocab_size):
-        denominator_t1 += phi_wt[w, t1]**2
+        denominator_t1 += phi_wt[w, t1] ** 2
     denominator_t1 = denominator_t1**0.5
 
     denominator_t2 = 0.0
     for w in range(vocab_size):
-        denominator_t2 += phi_wt[w, t2]**2
+        denominator_t2 += phi_wt[w, t2] ** 2
     denominator_t2 = denominator_t2**0.5
 
     denominator = denominator_t1 * denominator_t2
@@ -72,16 +71,16 @@ def calc_cosine_primitive(phi_wt: jax.Array, t1: int, t2: int):
 def calc_hellinger_primitive(phi_wt: jax.Array, t1: int, t2: int):
     dist = 0.0
     for w in range(vocab_size):
-        dist += (phi_wt[w, t1]**0.5 - phi_wt[w, t2]**0.5)**2
-    return (dist / 2)**0.5
+        dist += (phi_wt[w, t1] ** 0.5 - phi_wt[w, t2] ** 0.5) ** 2
+    return (dist / 2) ** 0.5
 
 
 def calc_topic_variance_primitive(phi_wt: jax.Array, dist_metric: str):
     dist_matrix = np.zeros((n_topics, n_topics), dtype=float)
     dist_funcs = {
-        'jaccard': calc_jaccard_primitive,
-        'cosine': calc_cosine_primitive,
-        'hellinger': calc_hellinger_primitive,
+        "jaccard": calc_jaccard_primitive,
+        "cosine": calc_cosine_primitive,
+        "hellinger": calc_hellinger_primitive,
     }
 
     for t1 in range(n_topics):
@@ -89,7 +88,7 @@ def calc_topic_variance_primitive(phi_wt: jax.Array, dist_metric: str):
             dist_func = dist_funcs[dist_metric]
             dist_matrix[t1][t2] = dist_func(phi_wt, t1, t2)
 
-    closest_topic = np.full((n_topics, ), fill_value=-1, dtype=int)
+    closest_topic = np.full((n_topics,), fill_value=-1, dtype=int)
     for t1 in range(n_topics):
         min_dist = np.inf
         for t2 in range(n_topics):
@@ -106,7 +105,7 @@ def calc_topic_variance_primitive(phi_wt: jax.Array, dist_metric: str):
 
 
 def calc_coherence_primitive(bow: jax.Array, phi_wt: jax.Array):
-    word_counts = np.zeros((vocab_size, ), dtype=int)
+    word_counts = np.zeros((vocab_size,), dtype=int)
     for d in range(n_documents):
         for w in range(vocab_size):
             word_counts[w] += int(bow[d][w] != 0)
@@ -126,7 +125,7 @@ def calc_coherence_primitive(bow: jax.Array, phi_wt: jax.Array):
         topic_coherence = 0.0
         n_pairs = 0
         for i, w1 in enumerate(topk_indices):
-            for w2 in topk_indices[i + 1:]:
+            for w2 in topk_indices[i + 1 :]:
                 assert word_counts[w1] != 0 and word_counts[w2] != 0
                 p_w1_w2 = pair_counts[w1][w2] / n_documents
                 p_w1 = word_counts[w1] / n_documents
@@ -147,7 +146,7 @@ def data():
     key = jax.random.key(seed)
     return jax.random.randint(
         key=key,
-        shape=(n_words, ),
+        shape=(n_words,),
         minval=0,
         maxval=vocab_size,
     )
@@ -156,16 +155,15 @@ def data():
 @pytest.fixture
 def doc_bounds():
     key = jax.random.key(seed)
-    return jnp.concatenate([
-        jnp.array([0]),
-        jax.random.randint(
-            key=key,
-            shape=(n_documents - 1, ),
-            minval=1,
-            maxval=n_words - 1
-        ),
-        jnp.array([n_words]),
-    ]).sort()
+    return jnp.concatenate(
+        [
+            jnp.array([0]),
+            jax.random.randint(
+                key=key, shape=(n_documents - 1,), minval=1, maxval=n_words - 1
+            ),
+            jnp.array([n_words]),
+        ]
+    ).sort()
 
 
 @pytest.fixture
@@ -221,9 +219,9 @@ def test_perplexity(phi_it, theta):
     assert_almost_equal(perplexity_metric, perplexity_primitive, decimal=5)
 
 
-@pytest.mark.parametrize('zero_threshold', [0.1, 0.3, 0.6, 0.8])
+@pytest.mark.parametrize("zero_threshold", [0.1, 0.3, 0.6, 0.8])
 def test_sparsity(zero_threshold, phi_wt):
-    thresh_mask = (phi_wt < zero_threshold)
+    thresh_mask = phi_wt < zero_threshold
     phi_wt_thresh = phi_wt.at[thresh_mask].set(0.0)
     sparsity_primitive = calc_sparsity_primitive(phi_wt=phi_wt_thresh)
     sparsity_metric = mtc.SparsityMetric()(
@@ -234,14 +232,14 @@ def test_sparsity(zero_threshold, phi_wt):
     assert_almost_equal(sparsity_metric, sparsity_primitive)
 
 
-@pytest.mark.parametrize('distance_metric', ['jaccard', 'cosine', 'hellinger'])
+@pytest.mark.parametrize("distance_metric", ["jaccard", "cosine", "hellinger"])
 def test_topic_variance(distance_metric, phi_wt):
     topic_variance_primitive = calc_topic_variance_primitive(
         phi_wt=phi_wt,
         dist_metric=distance_metric,
     )
     topic_variance_metric = mtc.TopicVarianceMetric(
-        top_k=top_k if distance_metric == 'jaccard' else None,
+        top_k=top_k if distance_metric == "jaccard" else None,
         distance_metric=distance_metric,
     )(phi_it=None, phi_wt=phi_wt, theta=None)
     assert_almost_equal(topic_variance_metric, topic_variance_primitive)

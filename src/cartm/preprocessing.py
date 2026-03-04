@@ -11,13 +11,13 @@ from nltk.stem import PorterStemmer
 
 class DatasetPreprocessor:
     def __init__(
-            self,
-            *,
-            lower: bool = True,
-            vocabulary: dict = None,
-            preprocessor: Callable[[str], str] = None,
-            tokenizer: Callable[[str], list[str]] = None,
-            stopwords: Iterable[str] = None,
+        self,
+        *,
+        lower: bool = True,
+        vocabulary: dict = None,
+        preprocessor: Callable[[str], str] = None,
+        tokenizer: Callable[[str], list[str]] = None,
+        stopwords: Iterable[str] = None,
     ):
         """
         Convert sequence of raw documents into a sequence of tokens
@@ -39,15 +39,15 @@ class DatasetPreprocessor:
 
         if preprocessor is not None and not callable(preprocessor):
             raise TypeError(
-                f'Preprocessor should be callable if provided, '
-                f'got type {type(preprocessor)}.'
+                f"Preprocessor should be callable if provided, "
+                f"got type {type(preprocessor)}."
             )
         self._preprocessor = preprocessor
 
         if tokenizer is not None and not callable(tokenizer):
             raise TypeError(
-                f'Tokenizer should be callable if provided, '
-                f'got type {type(tokenizer)}.'
+                f"Tokenizer should be callable if provided, "
+                f"got type {type(tokenizer)}."
             )
         self._tokenizer = tokenizer
 
@@ -60,8 +60,8 @@ class DatasetPreprocessor:
                 raise
 
     def fit(
-            self,
-            data: Sequence[str],
+        self,
+        data: Sequence[str],
     ) -> dict:
         """
         Learn a vocabulary dictionary of all tokens in the raw documents.
@@ -76,10 +76,10 @@ class DatasetPreprocessor:
         return self.vocabulary
 
     def fit_transform(
-            self,
-            data: Sequence[str],
-            *,
-            return_doc_bounds: bool = True,
+        self,
+        data: Sequence[str],
+        *,
+        return_doc_bounds: bool = True,
     ) -> Array | tuple[Array, Array]:
         """
         Learn the vocabulary dictionary and return a flattened list of all
@@ -99,7 +99,9 @@ class DatasetPreprocessor:
             self._vocab = self._create_vocabulary(texts_tokenized)
 
         self._data = []
-        self._doc_bounds = [0, ]
+        self._doc_bounds = [
+            0,
+        ]
         for text in texts_tokenized:
             self._data.extend([self._vocab[word] for word in text])
             self._doc_bounds.append(len(self._data))
@@ -117,9 +119,9 @@ class DatasetPreprocessor:
         if self._preprocessor is None:
             if self._lower:
                 text = text.lower()
-                text = re.sub(r'[^a-z]', ' ', text)
+                text = re.sub(r"[^a-z]", " ", text)
             else:
-                text = re.sub(r'[^A-Za-z]', ' ', text)
+                text = re.sub(r"[^A-Za-z]", " ", text)
         else:
             text = self._preprocessor(text)
 
@@ -132,7 +134,9 @@ class DatasetPreprocessor:
             text_tokenized = self._tokenizer(text)
 
         # removing stopwords
-        text_tokenized = [word for word in text_tokenized if word not in self._stopwords]
+        text_tokenized = [
+            word for word in text_tokenized if word not in self._stopwords
+        ]
 
         return text_tokenized
 
@@ -151,13 +155,7 @@ class DatasetPreprocessor:
 
 
 class BatchLoader:
-    def __init__(
-            self,
-            data: Array,
-            doc_bounds: Array,
-            *,
-            batch_size: int = 10000
-    ):
+    def __init__(self, data: Array, doc_bounds: Array, *, batch_size: int = 10000):
         """
         Split tokenized data into batches. Instance of this class can be passed
         directly to ContextTopicModel for batched fitting.
@@ -185,15 +183,21 @@ class BatchLoader:
 
             # add bounds at the beginning and ending of the batch
             if len(doc_bounds_batch) == 0 or doc_bounds_batch[0] != 0:
-                doc_bounds_batch = jnp.concatenate([
-                    jnp.array([0]),
-                    doc_bounds_batch,
-                ], dtype=int)
+                doc_bounds_batch = jnp.concatenate(
+                    [
+                        jnp.array([0]),
+                        doc_bounds_batch,
+                    ],
+                    dtype=int,
+                )
             if doc_bounds_batch[-1] != self.batch_size:
-                doc_bounds_batch = jnp.concatenate([
-                    doc_bounds_batch,
-                    jnp.array([end_idx - start_idx]),
-                ], dtype=int)
+                doc_bounds_batch = jnp.concatenate(
+                    [
+                        doc_bounds_batch,
+                        jnp.array([end_idx - start_idx]),
+                    ],
+                    dtype=int,
+                )
 
             self._batches.append((data_batch, doc_bounds_batch))
 

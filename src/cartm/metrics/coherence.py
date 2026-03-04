@@ -6,11 +6,11 @@ from .metric_base import Metric
 
 class CoherenceMetric(Metric):
     def __init__(
-            self,
-            data: Array,
-            top_k: int,
-            tag: str = None,
-            eps: float = 1e-12,
+        self,
+        data: Array,
+        top_k: int,
+        tag: str = None,
+        eps: float = 1e-12,
     ):
         """
         Args:
@@ -33,7 +33,9 @@ class CoherenceMetric(Metric):
             phi_wt,
             kth=-self.top_k,
             axis=0,
-        )[-self.top_k:]  # (W_k, T)
+        )[
+            -self.top_k :
+        ]  # (W_k, T)
         n_docs = self.word_doc_indicator.shape[1]
 
         top_words_per_topic = top_words_per_topic.T  # (T, W_k)
@@ -42,10 +44,11 @@ class CoherenceMetric(Metric):
 
         co_occurrences = top_word_indicator @ top_word_indicator_T  # (T, W_k, W_k)
         co_occurrences /= n_docs  # normalize probabilities
-        occurrences = self.word_occurence[top_words_per_topic]   # (T, W_k)
+        occurrences = self.word_occurence[top_words_per_topic]  # (T, W_k)
         occurrences /= n_docs  # normalize probabilities
         pmi = jnp.log(
-            co_occurrences / occurrences[..., None] / occurrences[:, None, :] + self._eps
+            co_occurrences / occurrences[..., None] / occurrences[:, None, :]
+            + self._eps
         )  # (T, W_k, W_k)
 
         unique_pmis = jnp.triu(pmi, k=1)  # (T, W_k, W_k)

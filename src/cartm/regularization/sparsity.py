@@ -6,12 +6,8 @@ from .regularization_base import Regularization
 
 class SparsityRegularization(Regularization):
     def __init__(
-            self,
-            alpha: jax.Array,
-            tau: float,
-            *,
-            tag: str = None,
-            eps: float = 1e-12):
+        self, alpha: jax.Array, tau: float, *, tag: str = None, eps: float = 1e-12
+    ):
         """
         Regularization that approximates the distribution p(w|t) \\
         to a given prior.

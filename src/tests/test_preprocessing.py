@@ -9,39 +9,39 @@ from cartm.preprocessing import DatasetPreprocessor, BatchLoader
 @pytest.fixture
 def raw_data() -> list[str]:
     return [
-        'Deep into the darkness peering,',
-        'Long I stood there, wondering, fearing,',
-        'Doubting, dreaming dreams no mortals',
-        'Ever dared to dream before;',
+        "Deep into the darkness peering,",
+        "Long I stood there, wondering, fearing,",
+        "Doubting, dreaming dreams no mortals",
+        "Ever dared to dream before;",
     ]
 
 
 @pytest.fixture
 def expected_words() -> list[list[str]]:
     return [
-        ['deep', 'dark', 'peer'],
-        ['long', 'stood', 'wonder', 'fear'],
-        ['doubt', 'dream', 'dream', 'mortal'],
-        ['ever', 'dare', 'dream', 'befor'],
+        ["deep", "dark", "peer"],
+        ["long", "stood", "wonder", "fear"],
+        ["doubt", "dream", "dream", "mortal"],
+        ["ever", "dare", "dream", "befor"],
     ]
 
 
 @pytest.fixture
 def expected_vocabulary() -> dict:
     return {
-        'deep': 0,
-        'dark': 1,
-        'peer': 2,
-        'long': 3,
-        'stood': 4,
-        'wonder': 5,
-        'fear': 6,
-        'doubt': 7,
-        'dream': 8,
-        'mortal': 9,
-        'ever': 10,
-        'dare': 11,
-        'befor': 12,
+        "deep": 0,
+        "dark": 1,
+        "peer": 2,
+        "long": 3,
+        "stood": 4,
+        "wonder": 5,
+        "fear": 6,
+        "doubt": 7,
+        "dream": 8,
+        "mortal": 9,
+        "ever": 10,
+        "dare": 11,
+        "befor": 12,
     }
 
 
@@ -119,5 +119,7 @@ def test_batch_loader(tokenized_data, document_bounds):
     assert batch3_data.tolist() == [8, 8, 9, 10]
     assert batch3_bounds.tolist() == [0, 3, 4]
 
-    assert batch4_data.tolist() == [8, ]
+    assert batch4_data.tolist() == [
+        8,
+    ]
     assert batch4_bounds.tolist() == [0, 1]

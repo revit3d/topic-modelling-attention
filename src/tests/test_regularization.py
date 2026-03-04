@@ -6,7 +6,6 @@ from numpy.testing import assert_allclose
 
 import cartm.regularization as reg
 
-
 n_words = 100
 n_topics = 10
 vocab_size = 20
