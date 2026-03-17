@@ -25,7 +25,7 @@ class AttentiveTopicModel(ContextTopicModel):
         theta: jax.Array,
         n_t: jax.Array,
     ) -> tuple[jax.Array, jax.Array]:
-        p_ti = self._norm(phi_ti * theta / (n_t[:, None] + self._eps))
+        p_ti = self._norm(phi_ti * theta / (n_t[:, None] + self._eps), axis=0)
         return p_ti, phi_ti
 
     @partial(jax.jit, static_argnums=0)
@@ -57,7 +57,7 @@ class AttentiveTopicModel(ContextTopicModel):
         n_wt = jnp.add.at(jnp.zeros_like(phi.T), batch, p_ti.T, inplace=False)
         phi_new = n_wt.T + phi * N_tw
         phi_new -= phi * grad_reg(phi)
-        phi_new = self._norm(phi_new)
+        phi_new = self._norm(phi_new, axis=0)
         return phi_new
 
     @partial(jax.jit, static_argnums=0, static_argnames="grad_reg")
@@ -70,6 +70,8 @@ class AttentiveTopicModel(ContextTopicModel):
         n_t: jax.Array,
         grad_reg: Callable,
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+        phi = phi.T
+
         # calculate phi' (words -> topics) matrix (phi with old p_{ti})
         phi_ti = self._calc_phi_hatch(phi=phi, batch=batch)  # (T, I)
 
@@ -91,6 +93,7 @@ class AttentiveTopicModel(ContextTopicModel):
             batch=batch,
             ctx_bounds=ctx_bounds,
         )  # (T, W)
+        # N_tw = jnp.zeros_like(phi)
 
         # update phi_wt = p(w|t) matrix
         phi_new = self._calc_phi(
@@ -101,16 +104,4 @@ class AttentiveTopicModel(ContextTopicModel):
             grad_reg=grad_reg,
         )  # (T, W)
 
-        return phi_ti, phi_new, theta, n_t_new
-
-    def _init_state(self, *, seed, data_size):
-        key = jax.random.key(seed)
-        self.phi = jax.random.uniform(
-            key=key,
-            shape=(self.n_topics, self.vocab_size),
-        )  # (T, W)
-        self.phi = self._norm(self.phi)
-        self.n_t = jnp.full(
-            shape=(self.n_topics,),
-            fill_value=data_size / self.n_topics,
-        )  # (T, )
+        return phi_ti.T, phi_new.T, theta.T, n_t_new

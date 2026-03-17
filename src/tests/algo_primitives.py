@@ -108,7 +108,7 @@ def calc_p_ti_primitive(
     for w in range(n_words):
         for t in range(n_topics):
             p_ti[t][w] = phi[t][w] * theta[t][w] / (n_t[t] + EPSILON)
-        p_ti[:, w] = calc_norm_vector_primitive(p_ti.T[w])
+        p_ti[:, w] = calc_norm_vector_primitive(p_ti[:, w])
     return jnp.array(p_ti)
 
 

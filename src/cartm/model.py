@@ -73,7 +73,6 @@ class ContextTopicModel:
                 f"Regularization [{regularization.__name__}] has to be a subclass of "
                 f"the Regularization base class, got type {type(regularization)}"
             )
-
         self._regularizations[regularization.tag] = regularization
 
     def add_metric(self, metric: mtc.Metric):
@@ -88,7 +87,6 @@ class ContextTopicModel:
                 f"Metric [{metric.__name__}] has to be a subclass of "
                 f"the Metric base class, got type {type(metric)}"
             )
-
         self._metrics[metric.tag] = metric
 
     def remove_regularization(self, tag: str):
@@ -111,24 +109,24 @@ class ContextTopicModel:
                 f"Did you mean to use remove_regularization?"
             )
 
-    @partial(jax.jit, static_argnums=0)
-    def _norm(self, x: jax.Array) -> jax.Array:
+    @partial(jax.jit, static_argnums=(0, 2))
+    def _norm(self, x: jax.Array, axis: int = 0) -> jax.Array:
         # take x+ = max(x, 0) element-wise (perform projection on positive simplex)
-        x = jnp.maximum(x, jnp.zeros_like(x))
-        # normalize values in non-zero rows to 1
-        # (mapping from the positive simplex to the unit simplex)
-        norm = x.sum(axis=0)
-        x = jnp.where(norm > self._eps, x / norm, jnp.zeros_like(x))
+        x = jnp.maximum(x, 0.0)
+        norm = jnp.sum(x, axis=axis, keepdims=True)
+        safe_norm = jnp.where(norm > self._eps, norm, 1.0)
+        x = jnp.where(norm > self._eps, x / safe_norm, 0.0)
         return x
 
     @partial(jax.jit, static_argnums=(0, 1))
     def _get_context_weights_1d(self, gamma: float) -> jax.Array:
         # w_i = gamma * (1 - gamma)**i
         suffix_context_weights = (
-            jnp.cumprod(jnp.full(self.ctx_len, (1 - gamma))) * gamma
+            jnp.cumprod(jnp.full(self.ctx_len, (1.0 - gamma))) * gamma
         )  # (C, )
         prefix_context_weights = suffix_context_weights[::-1]  # (C, )
-        self_context_weight = jnp.array([self._gamma * self._self_aware_context])
+        self_context_weight = jnp.array([gamma * self._self_aware_context], dtype=jnp.float32)
+
         context_weights = jnp.concatenate(
             [
                 prefix_context_weights,
@@ -139,127 +137,37 @@ class ContextTopicModel:
         return jnp.array(context_weights)  # (2C + 1, )
 
     @partial(jax.jit, static_argnums=0)
-    def _get_context_weights_2d(
-        self,
-        *,
-        batch_matrix: jax.Array,
-        attn_bounds: jax.Array,
-    ) -> jax.Array:
-        batch_size = batch_matrix.shape[0]
+    def _calc_attn(self, *, matrix: jax.Array, ctx_bounds: jax.Array) -> jax.Array:
+        batch_size, embed_size = matrix.shape
 
-        # True where to attend
-        attn_matrix = jnp.ones(
-            shape=(batch_size + self.ctx_len * 2, self.ctx_len * 2 + 1),
-            dtype=bool,
-        )  # (I + 2C, 2C + 1)
+        pad_zeros = jnp.zeros((self.ctx_len, embed_size), dtype=matrix.dtype)
+        padded_matrix = jnp.concatenate([pad_zeros, matrix, pad_zeros], axis=0)
 
-        # prefix attention mask (ignore words from the previous document in context)
-        prefix_bounds = attn_bounds[:-1] + self.ctx_len  # (B, )
+        doc_starts = jnp.zeros(batch_size, dtype=jnp.int32)
+        doc_starts = doc_starts.at[ctx_bounds[:-1]].set(1)
+        doc_ids = jnp.cumsum(doc_starts)
 
-        ignored_mask_prefix = jnp.ones(
-            (self.ctx_len, self.ctx_len), dtype=bool
-        )  # (C, C)
-        ignored_mask_prefix = jnp.rot90(~jnp.triu(ignored_mask_prefix))  # (C, C)
-        # for broadcasting
-        ignored_mask_prefix = jnp.tile(
-            ignored_mask_prefix,
-            reps=len(prefix_bounds),
-        ).T  # (B * C, C)
+        pad_left = jnp.arange(-self.ctx_len, 0, dtype=jnp.int32)
+        pad_right = doc_ids[-1] + 1 + jnp.arange(self.ctx_len, dtype=jnp.int32)
+        padded_doc_ids = jnp.concatenate([pad_left, doc_ids, pad_right])
 
-        # context (row) indices where attention mask is needed (the beginning of a new document)
-        shifts = jnp.ones((len(prefix_bounds), self.ctx_len), dtype=int)  # (B, C)
-        shifts = shifts.at[:, 0].set(prefix_bounds)
-        shifts = jnp.cumsum(shifts, axis=1)
-        shifts = shifts.reshape(-1, 1)  # (B * C, 1)
+        def compute_attn_i(i):
+            doc_window = jax.lax.dynamic_slice(padded_doc_ids, (i,), (2 * self.ctx_len + 1,))
+            mask = (doc_window == doc_ids[i])
 
-        # words (column) indices in prefix context
-        prefix_columns = jnp.arange(self.ctx_len)  # (C, )
+            weights = self._context_weights_1d * mask
+            norm = jnp.sum(weights)
+            safe_norm = jnp.where(norm > self._eps, norm, 1.0)
+            weights = jnp.where(norm > self._eps, weights / safe_norm, 0.0)
 
-        attn_matrix = attn_matrix.at[shifts, prefix_columns].set(ignored_mask_prefix)
+            window = jax.lax.dynamic_slice(padded_matrix, (i, 0), (2 * self.ctx_len + 1, embed_size))
+            return jnp.dot(weights, window)
 
-        # suffix attention (ignore words from the next document in context)
-        suffix_bounds = attn_bounds[1:]  # (B, )
-
-        ignored_mask_suffix = jnp.ones(
-            (self.ctx_len, self.ctx_len), dtype=bool
-        )  # (C, C)
-        ignored_mask_suffix = jnp.rot90(~jnp.tril(ignored_mask_suffix))  # (C, C)
-        # for broadcasting
-        ignored_mask_suffix = jnp.tile(
-            ignored_mask_suffix,
-            reps=len(suffix_bounds),
-        ).T  # (B * C, C)
-
-        # context (row) indices where attention mask is needed (the end of a document)
-        shifts = jnp.ones((len(suffix_bounds), self.ctx_len), dtype=int)  # (B, C)
-        shifts = shifts.at[:, 0].set(suffix_bounds)
-        shifts = jnp.cumsum(shifts, axis=1)
-        shifts = shifts.reshape(-1, 1)  # (B * C, 1)
-
-        # words (column) indices in suffix context
-        suffix_columns = jnp.arange(self.ctx_len + 1, self.ctx_len * 2 + 1)  # (C, )
-
-        # apply mask in reverse order
-        attn_matrix = attn_matrix.at[shifts[::-1], suffix_columns].set(
-            ignored_mask_suffix[::-1]
-        )
-
-        # remove padding
-        attn_matrix = attn_matrix[self.ctx_len:-self.ctx_len]  # (I, 2C + 1)
-
-        # calculate context weights with respect to attention and normalize weights
-        context_matrix = self._context_weights_1d * attn_matrix  # (I, 2C + 1)
-        context_matrix = self._norm(context_matrix.T).T
-        return context_matrix  # (I, 2C + 1)
-
-    @partial(jax.jit, static_argnums=0)
-    def _get_context_tensor(self, *, batch_matrix: jax.Array) -> jax.Array:
-        """
-        Stacks 2d-data into a 3d-tensor along a new (context) axis,
-        shifting the data along the new axis. The constructed tensor
-        is helpful for fast context convolution with given weights.
-        """
-        batch_size, embed_size = batch_matrix.shape
-        pad_token = -1  # assuming we don't have negative tokens in vocabulary
-
-        # shifts for rolling the batch along new dimension
-        shifts = jnp.arange(0, -2 * self.ctx_len - 1, -1)  # (2C + 1, )
-
-        # pad batch for shifting
-        max_shift = self.ctx_len * 2 + batch_size
-        padded_batch = jnp.full(
-            (max_shift, embed_size),
-            fill_value=pad_token,
-            dtype=batch_matrix.dtype,
-        )  # (I + 2C, T)
-        padded_batch = padded_batch.at[self.ctx_len:self.ctx_len + batch_size].set(
-            batch_matrix
-        )
-
-        # rolling and clipping each "slice" of batch
-        def shift_batch(shift):
-            return jnp.roll(padded_batch, shift, axis=0)[:batch_size]
-
-        # apply vmap over all shifts
-        stacked_tensor = jax.vmap(shift_batch)(shifts).transpose(1, 0, 2)
-        return stacked_tensor  # (I, 2C + 1, T)
+        return jax.vmap(compute_attn_i)(jnp.arange(batch_size))
 
     @partial(jax.jit, static_argnums=0)
     def _calc_phi_hatch(self, *, phi: jax.Array, n_t: jax.Array) -> jax.Array:
-        return self._norm(phi.T * n_t[:, None]).T  # (W, T)
-
-    @partial(jax.jit, static_argnums=0)
-    def _calc_attn(self, *, matrix: jax.Array, ctx_bounds: jax.Array) -> jax.Array:
-        phi_it_hatch_with_context = self._get_context_tensor(
-            batch_matrix=matrix
-        )  # (I, 2C + 1, A)
-        context_matrix = self._get_context_weights_2d(
-            batch_matrix=matrix,
-            attn_bounds=ctx_bounds,
-        )  # (I, 2C + 1)
-        attn = context_matrix[..., None] * phi_it_hatch_with_context  # (I, 2C + 1, A)
-        attn = jnp.sum(attn, axis=1)  # (I, A)
-        return attn
+        return self._norm(phi * n_t, axis=1)  # (W, T)
 
     @partial(jax.jit, static_argnums=0)
     def _calc_theta(
@@ -269,17 +177,14 @@ class ContextTopicModel:
         batch: jax.Array,
         ctx_bounds: jax.Array,
     ) -> jax.Array:
-        theta_it = self._calc_attn(
-            matrix=phi_hatch[batch], ctx_bounds=ctx_bounds
-        )  # (I, T)
-        return theta_it
+        return self._calc_attn(matrix=phi_hatch[batch], ctx_bounds=ctx_bounds)  # (I, T)
 
     @partial(jax.jit, static_argnums=0)
     def _calc_p_ti(
         self, *, phi: jax.Array, theta: jax.Array, batch: jax.Array
     ) -> tuple[jax.Array, jax.Array]:
         phi_it = phi[batch]  # (I, T)
-        p_ti = self._norm((phi_it * theta).T).T  # (I, T)
+        p_ti = self._norm(phi_it * theta, axis=1)  # (I, T)
         return p_ti, phi_it
 
     @partial(jax.jit, static_argnums=0)
@@ -295,25 +200,15 @@ class ContextTopicModel:
         p_ti: jax.Array,
         grad_reg: Callable,
     ) -> jax.Array:
-        phi_new = jnp.add.at(
-            jnp.zeros_like(phi),
-            batch,
-            p_ti,
-            inplace=False,
-        )  # (W, T)
+        phi_new = jnp.zeros_like(phi).at[batch].add(p_ti)
         phi_new -= phi * grad_reg(phi)  # (W, T)
-        phi_new = self._norm(phi_new)  # (W, T)
+        phi_new = self._norm(phi_new, axis=0)  # (W, T)
         return phi_new
 
     def _compose_regularizations(self):
         regs = self._regularizations.values()
         reg_grad = jax.grad(
-            lambda x: sum(
-                [
-                    1.0,
-                ]
-                + [reg(x) for reg in regs]
-            )
+            lambda x: sum([1.0,] + [reg(x) for reg in regs])
         )
         return jax.jit(reg_grad)
 
@@ -384,7 +279,7 @@ class ContextTopicModel:
         n_t: jax.Array,
         grad_reg: Callable,
         lr: float,
-    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         phi_new = phi.copy()
         n_t_new = n_t.copy()
         phi_it = []
@@ -413,7 +308,7 @@ class ContextTopicModel:
             key=key,
             shape=(self.vocab_size, self.n_topics),
         )  # (W, T)
-        self.phi = self._norm(self.phi)
+        self.phi = self._norm(self.phi, axis=0)
         self.n_t = jnp.full(
             shape=(self.n_topics,),
             fill_value=data_size / self.n_topics,
@@ -442,7 +337,7 @@ class ContextTopicModel:
                 phi = phi_prev * (1 - lr) + phi_new * lr
             max_iter: max number of iterations.
             tol: early stopping threshold.
-            verbose: write logs to stdout on each iteration.
+            verbose: write logs to stdout on each iteration.\n
                 0 - silent\n
                 1 - output general info about iterations\n
                 2 - output metric values after each iteration
