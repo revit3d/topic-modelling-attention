@@ -2,6 +2,7 @@ import re
 from typing import Sequence, Callable, Iterable
 
 import jax.numpy as jnp
+import numpy as np
 from jax import Array
 
 from nltk import word_tokenize
@@ -34,8 +35,7 @@ class DatasetPreprocessor:
         """
         self._lower = lower
         self._vocab = vocabulary
-        self._data = None
-        self._doc_bounds = None
+        self._stemmer = PorterStemmer()
 
         if preprocessor is not None and not callable(preprocessor):
             raise TypeError(
@@ -54,24 +54,11 @@ class DatasetPreprocessor:
         if stopwords is None:
             self._stopwords = set(default_stopwords.words("english"))
         else:
-            try:
-                self._stopwords = set(stopwords)
-            except TypeError:
-                raise
+            self._stopwords = set(stopwords)
 
-    def fit(
-        self,
-        data: Sequence[str],
-    ) -> dict:
-        """
-        Learn a vocabulary dictionary of all tokens in the raw documents.
-
-        Args:
-            data: a sequence of strings.
-        """
-        texts_tokenized = []
-        for doc in data:
-            texts_tokenized.append(self._preprocess_text(doc))
+    def fit(self, data: Sequence[str]) -> dict:
+        """Learn a vocabulary dictionary of all tokens in the raw documents."""
+        texts_tokenized = [self._preprocess_text(doc) for doc in data]
         self._vocab = self._create_vocabulary(texts_tokenized)
         return self.vocabulary
 
@@ -91,31 +78,28 @@ class DatasetPreprocessor:
                 as the second value (with the first value 0 and the last
                 value is len(data)).
         """
-        texts_tokenized = []
-        for doc in data:
-            texts_tokenized.append(self._preprocess_text(doc))
+        texts_tokenized = [self._preprocess_text(doc) for doc in data]
 
         if self._vocab is None:
             self._vocab = self._create_vocabulary(texts_tokenized)
 
-        self._data = []
-        self._doc_bounds = [
-            0,
-        ]
+        flat_data = []
+        doc_bounds = [0]
         for text in texts_tokenized:
-            self._data.extend([self._vocab[word] for word in text])
-            self._doc_bounds.append(len(self._data))
+            encoded = [self._vocab[word] for word in text if word in self._vocab]
+            flat_data.extend(encoded)
+            doc_bounds.append(len(flat_data))
 
-        self._data = jnp.array(self._data, dtype=int)
-        self._doc_bounds = jnp.array(self._doc_bounds, dtype=int)
+        flat_data_jnp = jnp.array(flat_data, dtype=jnp.int32)
+        doc_bounds_jnp = jnp.array(doc_bounds, dtype=jnp.int32)
 
         if return_doc_bounds:
-            return self._data, self._doc_bounds
-        return self._data
+            return flat_data_jnp, doc_bounds_jnp
+        return flat_data_jnp
 
     def _preprocess_text(self, text: str) -> list[str]:
         """Apply preprocessing and tokenization to a single document."""
-        # preprocessing stage
+        # Preprocessing stage
         if self._preprocessor is None:
             if self._lower:
                 text = text.lower()
@@ -128,8 +112,6 @@ class DatasetPreprocessor:
         # tokenization stage
         if self._tokenizer is None:
             text_tokenized = word_tokenize(text)
-            stemmer = PorterStemmer()
-            text_tokenized = [stemmer.stem(token) for token in text_tokenized]
         else:
             text_tokenized = self._tokenizer(text)
 
@@ -138,19 +120,20 @@ class DatasetPreprocessor:
             word for word in text_tokenized if word not in self._stopwords
         ]
 
+        if self._tokenizer is None:
+            text_tokenized = [self._stemmer.stem(token) for token in text_tokenized]
+
         return text_tokenized
 
     @staticmethod
-    def _create_vocabulary(texts: list[list[str]]) -> dict:
+    def _create_vocabulary(texts: list[list[str]]) -> dict[str, int]:
         """Create vocabulary from all unique terms in tokenized corpus."""
         unique_words = {word for text in texts for word in text}
-        return {word: token for token, word in enumerate(unique_words)}
+        return {word: token for token, word in enumerate(sorted(unique_words))}
 
     @property
     def vocabulary(self):
-        """
-        Mapping used for tokenizing terms.
-        """
+        """Mapping used for tokenizing terms."""
         return self._vocab
 
 
@@ -170,36 +153,31 @@ class BatchLoader:
         self.batch_size = batch_size
         self._batches = []
 
-        num_batches = jnp.ceil(len(data) / batch_size).astype(int)
+        data_np = np.asarray(data)
+        doc_bounds_np = np.asarray(doc_bounds)
+        data_len = len(data_np)
+        num_batches = (data_len + batch_size - 1) // batch_size
+
         for i in range(num_batches):
             start_idx = i * self.batch_size
-            end_idx = (i + 1) * self.batch_size
-            end_idx = min(end_idx, len(data))
+            end_idx = min((i + 1) * self.batch_size, data_len)
 
-            data_batch = data[start_idx:end_idx]
-            bounds_batch_mask = (doc_bounds >= start_idx) & (doc_bounds < end_idx)
-            doc_bounds_batch = doc_bounds[bounds_batch_mask].copy()
-            doc_bounds_batch -= start_idx  # absolute bounds to batch-relative bounds
+            data_batch = data_np[start_idx:end_idx]
 
-            # add bounds at the beginning and ending of the batch
+            bounds_batch_mask = (doc_bounds_np >= start_idx) & (doc_bounds_np < end_idx)
+            doc_bounds_batch = doc_bounds_np[bounds_batch_mask]
+            doc_bounds_batch -= start_idx
+
             if len(doc_bounds_batch) == 0 or doc_bounds_batch[0] != 0:
-                doc_bounds_batch = jnp.concatenate(
-                    [
-                        jnp.array([0]),
-                        doc_bounds_batch,
-                    ],
-                    dtype=int,
-                )
-            if doc_bounds_batch[-1] != self.batch_size:
-                doc_bounds_batch = jnp.concatenate(
-                    [
-                        doc_bounds_batch,
-                        jnp.array([end_idx - start_idx]),
-                    ],
-                    dtype=int,
-                )
+                doc_bounds_batch = np.concatenate([np.array([0]), doc_bounds_batch])
 
-            self._batches.append((data_batch, doc_bounds_batch))
+            if doc_bounds_batch[-1] != (end_idx - start_idx):
+                doc_bounds_batch = np.concatenate([doc_bounds_batch, np.array([end_idx - start_idx])])
+
+            self._batches.append((
+                jnp.array(data_batch, dtype=jnp.int32), 
+                jnp.array(doc_bounds_batch, dtype=jnp.int32)
+            ))
 
     def __len__(self):
         return len(self._batches)
