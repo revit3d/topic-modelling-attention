@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from .math_primitives import (
+from tests.math_primitives import (
     calc_norm_vector_primitive,
     calc_norm_matrix_primitive,
     EPSILON,
@@ -22,13 +22,13 @@ def calc_phi_hatch_primitive(
 
 def calc_attn_primitive(
     matrix: jax.Array,
-    doc_bounds: jax.Array,
+    ctx_bounds: jax.Array,
     ctx_len: int,
     gamma: float,
 ):
     n_words, n_topics = matrix.shape
-    doc_bounds_prefix = set((doc_bounds[1:] - 1).tolist())
-    doc_bounds_suffix = set(doc_bounds[:-1].tolist())
+    doc_bounds_prefix = set((ctx_bounds[1:] - 1).tolist())
+    doc_bounds_suffix = set(ctx_bounds[:-1].tolist())
 
     attn = []
     for w in range(n_words):
@@ -76,7 +76,7 @@ def calc_theta_primitive(
 ):
     phi_it_hatch = phi_hatch[data]
     theta = calc_attn_primitive(
-        matrix=phi_it_hatch, doc_bounds=doc_bounds, ctx_len=ctx_len, gamma=gamma
+        matrix=phi_it_hatch, ctx_bounds=doc_bounds, ctx_len=ctx_len, gamma=gamma
     )
     return theta
 
@@ -107,7 +107,7 @@ def calc_p_ti_primitive(
     p_ti = np.zeros((n_topics, n_words))
     for w in range(n_words):
         for t in range(n_topics):
-            p_ti[t][w] = phi[t][w] * theta[t][w] / (n_t[t] + EPSILON)
+            p_ti[t][w] = phi[w][t] * theta[w][t] / (n_t[t] + EPSILON)
         p_ti[:, w] = calc_norm_vector_primitive(p_ti[:, w])
     return jnp.array(p_ti)
 
@@ -154,7 +154,7 @@ def calc_N_tw_primitive(
         word_token = data[i]
         q_iw[i][word_token] = 1
     q_iw = calc_attn_primitive(
-        matrix=q_iw, doc_bounds=doc_bounds, ctx_len=ctx_len, gamma=gamma
+        matrix=q_iw, ctx_bounds=doc_bounds, ctx_len=ctx_len, gamma=gamma
     )
 
     N_tw = np.zeros((n_topics, vocab_size))
@@ -181,6 +181,6 @@ def calc_phi_tw_primitive(
             word_token = data[i]
             n_tw[t][word_token] += p_ti[t][i]
 
-    phi = n_tw + phi_old * N_tw
-    phi = calc_norm_matrix_primitive(phi)
+    phi = n_tw + phi_old.T * N_tw
+    phi = calc_norm_matrix_primitive(phi).T
     return phi

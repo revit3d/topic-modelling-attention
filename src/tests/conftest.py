@@ -3,7 +3,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from .config import TestConfig
+from tests.config import TestConfig
+from tests.math_primitives import calc_norm_matrix_primitive
 
 
 @pytest.fixture(scope="session")
@@ -37,3 +38,11 @@ def doc_bounds(config: TestConfig):
             jnp.array([config.n_words]),
         ]
     ).sort()
+
+
+@pytest.fixture
+def phi(config):
+    key = jax.random.key(config.seed)
+    phi = jax.random.uniform(key=key, shape=(config.vocab_size, config.n_topics))
+    phi = calc_norm_matrix_primitive(phi)
+    return phi

@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-EPSILON = 1e-12
+from cartm.core import EPSILON
 
 
 def calc_norm_vector_primitive(x: jax.Array):

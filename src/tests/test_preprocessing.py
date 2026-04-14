@@ -22,7 +22,7 @@ def expected_words() -> list[list[str]]:
         ["deep", "dark", "peer"],
         ["long", "stood", "wonder", "fear"],
         ["doubt", "dream", "dream", "mortal"],
-        ["ever", "dare", "dream", "befor"],
+        ["ever", "dare", "dream"],
     ]
 
 
@@ -41,7 +41,6 @@ def expected_vocabulary() -> dict:
         "mortal": 9,
         "ever": 10,
         "dare": 11,
-        "befor": 12,
     }
 
 
@@ -52,7 +51,7 @@ def tokenized_data() -> jax.Array:
 
 @pytest.fixture
 def document_bounds() -> jax.Array:
-    return jnp.array([0, 3, 7, 11, 15])
+    return jnp.array([0, 3, 7, 11, 14])
 
 
 def test_preprocess_text(raw_data, expected_words):
