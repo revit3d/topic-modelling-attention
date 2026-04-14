@@ -1,7 +1,8 @@
 import jax.numpy as jnp
 from jax import Array
 
-from .metric_base import Metric
+from cartm.core import EPSILON
+from cartm.metrics.metric_base import Metric
 
 
 class CoherenceMetric(Metric):
@@ -10,14 +11,12 @@ class CoherenceMetric(Metric):
         data: Array,
         top_k: int,
         tag: str = None,
-        eps: float = 1e-12,
     ):
         """
         Args:
             data: bag of words with shape (D, W), fitted on the corpus.
             top_k: number of top words to calculate pmi.
             tag: metric's name to be displayed in logs.
-            eps: parameter used for numerical stability.
         """
         if tag is None:
             tag = self.__class__.__name__
@@ -26,9 +25,8 @@ class CoherenceMetric(Metric):
         self.word_doc_indicator = (data > 0).astype(int).T  # (W, D)
         self.word_occurence = self.word_doc_indicator.sum(axis=1)  # (W, )
         self.top_k = top_k
-        self._eps = eps
 
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array):
+    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs):
         top_words_per_topic = jnp.argpartition(
             phi_wt,
             kth=-self.top_k,
@@ -46,7 +44,7 @@ class CoherenceMetric(Metric):
         occurrences /= n_docs  # normalize probabilities
         pmi = jnp.log(
             co_occurrences / occurrences[..., None] / occurrences[:, None, :]
-            + self._eps
+            + EPSILON
         )  # (T, W_k, W_k)
 
         unique_pmis = jnp.triu(pmi, k=1)  # (T, W_k, W_k)

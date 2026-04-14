@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-from .metric_base import Metric
+from cartm.metrics.metric_base import Metric
 
 
 class SparsityMetric(Metric):
@@ -21,7 +21,7 @@ class SparsityMetric(Metric):
         self.eps = eps
 
     @partial(jax.jit, static_argnums=0)
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array) -> float:
+    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs) -> float:
         num_zeros = jnp.sum(jnp.abs(phi_wt) < self.eps)
         num_elems = phi_wt.shape[0] * phi_wt.shape[1]
         return num_zeros / num_elems

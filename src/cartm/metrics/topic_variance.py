@@ -5,7 +5,8 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-from .metric_base import Metric
+from cartm.core import EPSILON
+from cartm.metrics.metric_base import Metric
 
 
 class TopicVarianceMetric(Metric):
@@ -14,7 +15,6 @@ class TopicVarianceMetric(Metric):
         distance_metric: Literal["jaccard", "cosine", "hellinger"] = "jaccard",
         top_k: int = None,
         tag: str = None,
-        eps: float = 1e-12,
     ):
         """
         Args:
@@ -22,7 +22,6 @@ class TopicVarianceMetric(Metric):
             top_k: number of top words to calculate distance metric.
                 Ignored if distance_metric != 'jaccard'.
             tag: metric's name to be displayed in logs.
-            eps: parameter used for numerical stability.
         """
         if tag is None:
             tag = self.__class__.__name__
@@ -44,9 +43,8 @@ class TopicVarianceMetric(Metric):
             self._dist_func = self._hellinger_distance
         else:
             raise NotImplementedError()
-        self._eps = eps
 
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array = None) -> float:
+    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array = None, **kwargs) -> float:
         # topic vectors can have different nature depending on the chosen metric
         if self.distance_metric == "jaccard":
             top_words_per_topic = jnp.argpartition(
@@ -78,7 +76,7 @@ class TopicVarianceMetric(Metric):
     def _cosine_distance(self, v1: Array, v2: Array) -> float:
         scalar_prod = jnp.sum(v1 * v2)
         norm = (jnp.sum(v1**2) ** 0.5) * (jnp.sum(v2**2) ** 0.5)
-        return 1 - scalar_prod / (norm + self._eps)
+        return 1 - scalar_prod / (norm + EPSILON)
 
     @partial(jax.jit, static_argnums=0)
     def _hellinger_distance(self, v1: Array, v2: Array) -> float:

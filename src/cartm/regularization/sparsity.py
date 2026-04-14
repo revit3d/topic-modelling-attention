@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 
-from .regularization_base import Regularization
+from cartm.regularization.regularization_base import Regularization
 
 
 class SparsityRegularization(Regularization):
