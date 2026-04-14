@@ -8,7 +8,6 @@ from cartm.core import get_context_weights_1d
 from tests.algo_primitives import (
     calc_theta_primitive,
     calc_p_ti_primitive,
-    calc_p_it_primitive,
     calc_N_tw_primitive,
     calc_n_t_primitive,
     calc_phi_tw_primitive,

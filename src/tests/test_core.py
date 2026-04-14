@@ -1,5 +1,3 @@
-import pytest
-
 import jax
 import jax.numpy as jnp
 from numpy.testing import assert_allclose

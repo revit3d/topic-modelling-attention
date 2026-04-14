@@ -172,10 +172,12 @@ class BatchLoader:
                 doc_bounds_batch = np.concatenate([np.array([0]), doc_bounds_batch])
 
             if doc_bounds_batch[-1] != (end_idx - start_idx):
-                doc_bounds_batch = np.concatenate([doc_bounds_batch, np.array([end_idx - start_idx])])
+                doc_bounds_batch = np.concatenate([
+                    doc_bounds_batch, np.array([end_idx - start_idx])
+                ])
 
             self._batches.append((
-                jnp.array(data_batch, dtype=jnp.int32), 
+                jnp.array(data_batch, dtype=jnp.int32),
                 jnp.array(doc_bounds_batch, dtype=jnp.int32)
             ))
 

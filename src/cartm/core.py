@@ -16,21 +16,21 @@ def norm(x: jax.Array, axis: int = 0) -> jax.Array:
 
 
 def get_context_weights_1d(ctx_len: int, gamma: float, self_aware: bool) -> jax.Array:
-        # w_i = gamma * (1 - gamma)**i
-        suffix_context_weights = (
-            jnp.cumprod(jnp.full(ctx_len, (1.0 - gamma))) * gamma
-        )  # (C, )
-        prefix_context_weights = suffix_context_weights[::-1]  # (C, )
-        self_context_weight = jnp.array([gamma * self_aware], dtype=jnp.float32)
+    # w_i = gamma * (1 - gamma)**i
+    suffix_context_weights = (
+        jnp.cumprod(jnp.full(ctx_len, (1.0 - gamma))) * gamma
+    )  # (C, )
+    prefix_context_weights = suffix_context_weights[::-1]  # (C, )
+    self_context_weight = jnp.array([gamma * self_aware], dtype=jnp.float32)
 
-        ctx_weights = jnp.concatenate(
-            [
-                prefix_context_weights,
-                self_context_weight,
-                suffix_context_weights,
-            ]
-        )
-        return jnp.array(ctx_weights)  # (2C + 1, )
+    ctx_weights = jnp.concatenate(
+        [
+            prefix_context_weights,
+            self_context_weight,
+            suffix_context_weights,
+        ]
+    )
+    return jnp.array(ctx_weights)  # (2C + 1, )
 
 
 @jax.jit
@@ -45,7 +45,7 @@ def doc_ids_from_bounds(matrix: jax.Array, ctx_bounds: jax.Array) -> jax.Array:
 def calc_attn(
     matrix: jax.Array,
     ctx_bounds: jax.Array,
-    ctx_weights : jax.Array,
+    ctx_weights: jax.Array,
 ) -> jax.Array:
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
     batch_size = matrix.shape[0]
@@ -74,7 +74,7 @@ def calc_attn(
 def calc_attn_transposed(
     matrix: jax.Array,
     ctx_bounds: jax.Array,
-    ctx_weights : jax.Array,
+    ctx_weights: jax.Array,
 ) -> jax.Array:
     batch_size, _ = matrix.shape
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
