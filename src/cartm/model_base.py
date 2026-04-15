@@ -239,7 +239,7 @@ class ModelBase(ABC):
                 )
             else:
                 # non-batched input
-                phi_it, phi_new, theta, self.n_t, batch_for_metrics = self._step(
+                phi_it, phi_new, theta, self.n_t = self._step(
                     batch=data,
                     ctx_bounds=ctx_bounds,
                     phi=self.phi,
@@ -248,6 +248,7 @@ class ModelBase(ABC):
                     grad_reg=grad_regularization,
                     num_attn_passes=num_attn_passes,
                 )
+                batch_for_metrics = data
 
             diff_norm = jnp.linalg.norm(phi_new - self.phi)
             if verbose > 0:
