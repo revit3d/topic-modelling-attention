@@ -74,7 +74,7 @@ class AttentiveTopicModel(ModelBase):
 
         n_t_new = jnp.sum(p_it, axis=0)  # (T,)
 
-        n_wt = jnp.zeros_like(phi).at[batch].add(p_it)  # (W, T)
+        n_wt = jax.ops.segment_sum(p_it, batch, phi.shape[0])  # (W, T)
         n_w = jnp.sum(n_wt, axis=1, keepdims=True)      # (W, 1)
         safe_n_w = jnp.where(n_w > EPSILON, n_w, 1.0)
 
@@ -84,7 +84,7 @@ class AttentiveTopicModel(ModelBase):
             ctx_bounds=ctx_bounds,
             ctx_weights=ctx_weights,
         )  # (I, T)
-        N_wt = jnp.zeros_like(phi).at[batch].add(attn_t_ratio)  # (W, T)
+        N_wt = jax.ops.segment_sum(attn_t_ratio, batch, phi.shape[0])  # (W, T)
 
         coeff = n_wt / safe_n_w
         phi_new = n_wt + coeff * N_wt
