@@ -9,9 +9,9 @@ EPSILON = 1e-12
 def norm(x: jax.Array, axis: int = 0) -> jax.Array:
     # take x+ = max(x, 0) element-wise (perform projection on positive simplex)
     x = jnp.maximum(x, 0.0)
-    norm = jnp.sum(x, axis=axis, keepdims=True)
-    safe_norm = jnp.where(norm > EPSILON, norm, 1.0)
-    x = jnp.where(norm > EPSILON, x / safe_norm, 0.0)
+    res = jnp.sum(x, axis=axis, keepdims=True)
+    safe_norm = jnp.where(res > EPSILON, res, 1.0)
+    x = jnp.where(res > EPSILON, x / safe_norm, 0.0)
     return x
 
 
@@ -60,9 +60,9 @@ def calc_attn(
         mask = valid_pos & same_doc
 
         weights = ctx_weights * mask
-        norm = jnp.sum(weights, axis=-1, keepdims=True)
-        safe_norm = jnp.where(norm > EPSILON, norm, 1.0)
-        weights = jnp.where(norm > EPSILON, weights / safe_norm, 0.0)
+        weights_norm = jnp.sum(weights, axis=-1, keepdims=True)
+        safe_norm = jnp.where(weights_norm > EPSILON, weights_norm, 1.0)
+        weights = jnp.where(weights_norm > EPSILON, weights / safe_norm, 0.0)
 
         window = matrix[clipped_idx]  # (2C + 1, H)
         return jnp.dot(weights, window)  # (H, )
@@ -89,9 +89,9 @@ def calc_attn_transposed(
         mask = valid_pos & same_doc
 
         weights = ctx_weights * mask
-        norm = jnp.sum(weights, axis=-1, keepdims=True)
-        safe_norm = jnp.where(norm > EPSILON, norm, 1.0)
-        weights = jnp.where(norm > EPSILON, weights / safe_norm, 0.0)
+        weights_norm = jnp.sum(weights, axis=-1, keepdims=True)
+        safe_norm = jnp.where(weights_norm > EPSILON, weights_norm, 1.0)
+        weights = jnp.where(weights_norm > EPSILON, weights / safe_norm, 0.0)
 
         return clipped_idx, weights, mask
 
