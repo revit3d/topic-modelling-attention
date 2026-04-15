@@ -3,7 +3,6 @@ from cartm.metrics.perplexity import PerplexityMetric
 from cartm.metrics.coherence import CoherenceMetric
 from cartm.metrics.phi_sparsity import SparsityMetric
 from cartm.metrics.topic_variance import TopicVarianceMetric
-from cartm.metrics.attentive_perplexity import AttentivePerplexityMetric
 
 __all__ = [
     "Metric",
@@ -11,5 +10,4 @@ __all__ = [
     "CoherenceMetric",
     "SparsityMetric",
     "TopicVarianceMetric",
-    "AttentivePerplexityMetric",
 ]

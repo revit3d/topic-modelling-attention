@@ -103,3 +103,40 @@ class AttentiveTopicModel(ModelBase):
         self.phi = norm(self.phi, axis=1)
 
         self.n_t = jnp.ones((self.n_topics,), dtype=jnp.float32)
+
+    def renormalize_phi(self, *, batch: jax.Array, phi: jax.Array):
+        """
+        phi = p(t|w) -> phi = p(w|t)
+        """
+        n_w = jnp.bincount(batch, length=self.vocab_size)
+        total = jnp.maximum(jnp.sum(n_w), 1)
+        p_w = n_w / total  # (W,)
+        p_t = jnp.sum(phi * p_w[:, None], axis=0)  # (T, )
+        phi_wt = phi * p_w[:, None] / (p_t[None, :] + EPSILON)  # (W, T)
+        phi_it = phi_wt[batch]  # (I, T)
+        return phi_wt, phi_it
+
+    def _calc_metrics(
+        self,
+        *,
+        batch: jax.Array,
+        phi_it: jax.Array,
+        phi_wt: jax.Array,
+        theta: jax.Array,
+        verbose: int,
+    ):
+        if len(self._metrics) == 0:
+            return
+
+        if verbose > 1:
+            print("  Metrics:")
+
+        phi_wt_renorm, phi_it_renorm = self.renormalize_phi(batch=batch, phi=phi_wt)
+        for tag, metric in self._metrics.items():
+            value = metric(
+                phi_it=phi_it_renorm,
+                phi_wt=phi_wt_renorm,
+                theta=theta,
+            )
+            if verbose > 1:
+                print(f"    {tag}: {value:.04f}")
