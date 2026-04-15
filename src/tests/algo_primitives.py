@@ -100,19 +100,24 @@ def calc_p_it_primitive(
 def calc_p_ti_primitive(
     phi: jax.Array,
     theta: jax.Array,
+    n_t: jax.Array,
     n_topics: int,
     n_words: int,
-    n_t: jax.Array | None = None,
 ):
+    assert phi.shape == (n_words, n_topics)
+    assert theta.shape == (n_words, n_topics)
+
     p_ti = np.zeros((n_topics, n_words))
     for w in range(n_words):
         for t in range(n_topics):
             p_ti[t][w] = phi[w][t] * theta[w][t] / (n_t[t] + EPSILON)
         p_ti[:, w] = calc_norm_vector_primitive(p_ti[:, w])
-    return jnp.array(p_ti)
+    return jnp.array(p_ti).T
 
 
 def calc_n_t_primitive(p_ti: jax.Array, n_topics: int, n_words: int):
+    assert p_ti.shape == (n_words, n_topics)
+
     n_t = np.zeros((n_topics,))
     for w in range(n_words):
         for t in range(n_topics):
@@ -127,6 +132,8 @@ def calc_phi_wt_primitive(
     n_topics: int,
     n_words: int,
 ):
+    assert p_ti.shape == (n_words, n_topics)
+
     # not testing partial derivatives here, trusting in jax.grad
     phi = np.zeros((vocab_size, n_topics))
     for i in range(n_words):
@@ -148,6 +155,9 @@ def calc_N_tw_primitive(
     ctx_len: int,
     gamma: float,
 ):
+    assert p_ti.shape == (n_words, n_topics)
+    assert theta.shape == (n_words, n_topics)
+
     # create one-hot [w_i = w]
     q_iw = np.zeros((n_words, vocab_size))
     for i in range(n_words):
@@ -161,7 +171,7 @@ def calc_N_tw_primitive(
     for t in range(n_topics):
         for w in range(vocab_size):
             for i in range(n_words):
-                N_tw[t][w] += q_iw[i][w] * p_ti[t][i] / (theta[t][i] + EPSILON)
+                N_tw[t][w] += q_iw[i][w] * p_ti[i][t] / (theta[i][t] + EPSILON)
     return N_tw
 
 
@@ -174,13 +184,20 @@ def calc_phi_tw_primitive(
     n_topics: int,
     n_words: int,
 ):
+    assert p_ti.shape == (n_words, n_topics)
+    assert N_tw.shape == (n_topics, vocab_size)
+    assert phi_old.shape == (vocab_size, n_topics)
+
     # not testing partial derivatives here, trusting in jax.grad
     n_tw = np.zeros((n_topics, vocab_size))
+    n_w = np.zeros(vocab_size)
     for i in range(n_words):
         for t in range(n_topics):
             word_token = data[i]
-            n_tw[t][word_token] += p_ti[t][i]
+            n_tw[t][word_token] += p_ti[i][t]
+            n_w[word_token] += p_ti[i][t]
 
-    phi = n_tw + phi_old.T * N_tw
+    coeff = n_tw / (n_w + EPSILON)[None, :]
+    phi = n_tw + coeff * N_tw
     phi = calc_norm_matrix_primitive(phi).T
     return phi

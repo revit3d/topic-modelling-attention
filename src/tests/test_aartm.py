@@ -48,7 +48,7 @@ def test_step(phi, n_t, data, doc_bounds, config):
     )
 
     n_t_primitive = calc_n_t_primitive(
-        p_ti=p_ti_primitive.T, n_topics=config.n_topics, n_words=config.n_words
+        p_ti=p_ti_primitive, n_topics=config.n_topics, n_words=config.n_words
     )
 
     N_tw_primitive = calc_N_tw_primitive(
