@@ -12,13 +12,21 @@ To install the package:
 
 ```
 git clone https://github.com/revit3d/topic-modelling-attention
+cd topic-modelling-attention
 ```
 
 2. Run installation
 
+2.1 If you don't have an nvidia gpu or if you want a cpu-only install.
+
 ```
-cd topic-modelling-attention
-poetry install
+poetry install --with cpu
+```
+
+2.2 If you want cpu+gpu install.
+
+```
+poetry install --with gpu
 ```
 
 3. Downloading additional data

@@ -9,34 +9,44 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = ">=3.11"
 nltk = "^3.9.1"
-black = "^26.1.0"
-jupyter = "^1.1.1"
-ipywidgets = "^8.1.8"
-jax = "^0.9.2"
-optax = "^0.2.8"
+scikit-learn = "^1.6.1"
+numpy = "^2.2.2"
 
+[tool.poetry.group.dev]
+optional = true
 
 [tool.poetry.group.dev.dependencies]
 pandas = "^2.2.3"
 seaborn = "^0.13.2"
-ipykernel = "^6.29.5"
-scikit-learn = "^1.6.1"
-numpy = "^2.2.2"
 
+[tool.poetry.group.test]
+optional = true
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.3.4"
 flake8 = "^7.1.1"
 pylint = "^3.3.4"
-numpy = "^2.2.2"
 
+[tool.poetry.group.examples]
+optional = true
 
 [tool.poetry.group.examples.dependencies]
-seaborn = "^0.13.2"
+jupyter = "^1.1.1"
 ipykernel = "^6.29.5"
-scikit-learn = "^1.6.1"
-numpy = "^2.2.2"
+ipywidgets = "^8.1.8"
+seaborn = "^0.13.2"
 
+[tool.poetry.group.cpu]
+optional = true
+
+[tool.poetry.group.cpu.dependencies]
+jax = "^0.10.0"
+
+[tool.poetry.group.gpu]
+optional = true
+
+[tool.poetry.group.gpu.dependencies]
+jax = { extras = ["cuda13"], version = "^0.10.0" }
 
 [tool.poetry.scripts]
 download-nltk-data = "src.install:download_nltk_data"
