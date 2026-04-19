@@ -3,6 +3,7 @@ from typing import Sequence, Callable, Iterable
 
 import jax.numpy as jnp
 import numpy as np
+import scipy.sparse as sp
 from jax import Array
 
 from nltk import word_tokenize
@@ -10,15 +11,36 @@ from nltk.corpus import stopwords as default_stopwords
 from nltk.stem import PorterStemmer
 
 
+def build_bow(
+    tokenized_data: Array,
+    document_bounds: Array,
+    vocab_size: int,
+) -> sp.csr_matrix:
+    tokenized_data = np.asarray(tokenized_data, dtype=np.int32)
+    document_bounds = np.asarray(document_bounds, dtype=np.bool)
+
+    n_docs = np.sum(document_bounds) + 1
+
+    doc_lens = np.bincount(np.cumsum(document_bounds))
+    rows = np.repeat(np.arange(n_docs, dtype=np.int32), doc_lens)
+    cols = tokenized_data
+    data = np.ones_like(cols, dtype=np.uint8)
+
+    bow = sp.csr_matrix((data, (rows, cols)), shape=(n_docs, vocab_size), dtype=np.uint32)
+    bow.sum_duplicates()
+
+    return bow
+
+
 class DatasetPreprocessor:
     def __init__(
         self,
         *,
         lower: bool = True,
-        vocabulary: dict = None,
-        preprocessor: Callable[[str], str] = None,
-        tokenizer: Callable[[str], list[str]] = None,
-        stopwords: Iterable[str] = None,
+        vocabulary: dict | None = None,
+        preprocessor: Callable[[str], str] | None = None,
+        tokenizer: Callable[[str], list[str]] | None = None,
+        stopwords: Iterable[str] | None = None,
     ):
         """
         Convert sequence of raw documents into a sequence of tokens
@@ -74,9 +96,9 @@ class DatasetPreprocessor:
 
         Args:
             data: a sequence of strings.
-            return_doc_bounds: if True, returns indices of document bounds
-                as the second value (with the first value 0 and the last
-                value is len(data)).
+            return_doc_bounds: if True, returns ohe of document bounds
+                as the second value (True at the index of the first token
+                in each document).
         """
         texts_tokenized = [self._preprocess_text(doc) for doc in data]
 
@@ -84,14 +106,18 @@ class DatasetPreprocessor:
             self._vocab = self._create_vocabulary(texts_tokenized)
 
         flat_data = []
-        doc_bounds = [0]
+        doc_bounds = []
         for text in texts_tokenized:
             encoded = [self._vocab[word] for word in text if word in self._vocab]
             flat_data.extend(encoded)
             doc_bounds.append(len(flat_data))
+        doc_bounds = doc_bounds[:-1]
 
+        flat_data = np.array(flat_data, dtype=np.int32)
+        doc_bounds_ohe = np.zeros_like(flat_data, dtype=np.bool)
+        doc_bounds_ohe[doc_bounds] = True
         flat_data_jnp = jnp.array(flat_data, dtype=jnp.int32)
-        doc_bounds_jnp = jnp.array(doc_bounds, dtype=jnp.int32)
+        doc_bounds_jnp = jnp.array(doc_bounds_ohe, dtype=jnp.bool)
 
         if return_doc_bounds:
             return flat_data_jnp, doc_bounds_jnp
@@ -146,40 +172,24 @@ class BatchLoader:
         Args:
             data: array of tokens with shape (I, ),
                 where I is total number of words in corpus.
-            doc_bounds: array of shape (B, ),
-                containing indices of document bounds.
+            doc_bounds: array of shape (I, ),
+                containing ohe of document bounds.
             batch_size: size of a single batch.
         """
         self.batch_size = batch_size
         self._batches = []
 
-        data_np = np.asarray(data)
-        doc_bounds_np = np.asarray(doc_bounds)
-        data_len = len(data_np)
+        data_len = data.shape[0]
         num_batches = (data_len + batch_size - 1) // batch_size
 
         for i in range(num_batches):
             start_idx = i * self.batch_size
             end_idx = min((i + 1) * self.batch_size, data_len)
 
-            data_batch = data_np[start_idx:end_idx]
+            data_batch = data[start_idx:end_idx]
+            doc_bounds_batch = doc_bounds[start_idx:end_idx]
 
-            bounds_batch_mask = (doc_bounds_np >= start_idx) & (doc_bounds_np < end_idx)
-            doc_bounds_batch = doc_bounds_np[bounds_batch_mask]
-            doc_bounds_batch -= start_idx
-
-            if len(doc_bounds_batch) == 0 or doc_bounds_batch[0] != 0:
-                doc_bounds_batch = np.concatenate([np.array([0]), doc_bounds_batch])
-
-            if doc_bounds_batch[-1] != (end_idx - start_idx):
-                doc_bounds_batch = np.concatenate([
-                    doc_bounds_batch, np.array([end_idx - start_idx])
-                ])
-
-            self._batches.append((
-                jnp.array(data_batch, dtype=jnp.int32),
-                jnp.array(doc_bounds_batch, dtype=jnp.int32)
-            ))
+            self._batches.append((data_batch, doc_bounds_batch))
 
     def __len__(self):
         return len(self._batches)

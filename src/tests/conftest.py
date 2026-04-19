@@ -2,6 +2,7 @@ import pytest
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from tests.config import TestConfig
 from tests.math_primitives import calc_norm_matrix_primitive
@@ -25,24 +26,26 @@ def data(config: TestConfig):
 
 @pytest.fixture(scope="session")
 def doc_bounds(config: TestConfig):
-    key = jax.random.key(config.seed)
-    return jnp.concatenate(
-        [
-            jnp.array([0]),
-            jax.random.randint(
-                key=key,
-                shape=(config.n_documents - 1,),
-                minval=1,
-                maxval=config.n_words - 1,
-            ),
-            jnp.array([config.n_words]),
-        ]
-    ).sort()
+    doc_bounds = np.random.choice(
+        config.n_words - 1,
+        size=config.n_documents - 1,
+        replace=False,
+    ) + 1
+    doc_bounds_ohe = np.zeros(config.n_words, dtype=np.bool)
+    doc_bounds_ohe[doc_bounds] = True
+    return jnp.asarray(doc_bounds_ohe)
 
 
-@pytest.fixture
-def phi(config):
+@pytest.fixture(scope="session")
+def phi(config: TestConfig):
     key = jax.random.key(config.seed)
     phi = jax.random.uniform(key=key, shape=(config.vocab_size, config.n_topics))
     phi = calc_norm_matrix_primitive(phi)
     return phi
+
+
+@pytest.fixture(scope="session")
+def n_t(config: TestConfig):
+    return jnp.full(
+        shape=(config.n_topics,), fill_value=config.n_words / config.n_topics
+    )

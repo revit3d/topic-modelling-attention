@@ -33,12 +33,6 @@ def get_context_weights_1d(ctx_len: int, gamma: float, self_aware: bool) -> jax.
     return jnp.array(ctx_weights)  # (2C + 1, )
 
 
-@jax.jit
-def doc_ids_from_bounds(matrix: jax.Array, ctx_bounds: jax.Array) -> jax.Array:
-    positions = jnp.arange(matrix.shape[0], dtype=ctx_bounds.dtype)
-    return jnp.searchsorted(ctx_bounds[:-1], positions, side="right")
-
-
 def _shift_1d(x: jax.Array, offset: int) -> jax.Array:
     n = x.shape[0]
 
@@ -100,7 +94,7 @@ def calc_attn(
 ) -> jax.Array:
     batch_size, _ = matrix.shape
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
-    doc_ids = doc_ids_from_bounds(matrix, ctx_bounds)
+    doc_ids = jnp.cumsum(ctx_bounds)
 
     offsets = range(-ctx_len, ctx_len + 1)
     denom = jnp.zeros((batch_size,), dtype=matrix.dtype)
@@ -133,7 +127,7 @@ def calc_attn_transposed(
 ) -> jax.Array:
     batch_size, _ = matrix.shape
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
-    doc_ids = doc_ids_from_bounds(matrix, ctx_bounds)
+    doc_ids = jnp.cumsum(ctx_bounds)
 
     offsets = range(-ctx_len, ctx_len + 1)
     denom = jnp.zeros((batch_size,), dtype=matrix.dtype)

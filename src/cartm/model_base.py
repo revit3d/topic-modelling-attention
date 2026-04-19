@@ -214,6 +214,7 @@ class ModelBase(ABC):
                 beyond the bound are ignored in the context.
             lr: coefficient for updating phi in online mode:
                 phi = phi_prev * (1 - lr) + phi_new * lr
+            num_attn_passes: number of E-steps on each iteration.
             max_iter: max number of iterations.
             tol: early stopping threshold.
             verbose: write logs to stdout on each iteration.\n
@@ -222,6 +223,7 @@ class ModelBase(ABC):
                 2 - output metric values after each iteration
             seed: random seed.
         """
+        assert num_attn_passes > 0
         self._init_state(seed=seed, data_size=len(data))
         grad_regularization = self._compose_regularizations()
 

@@ -59,7 +59,7 @@ class AttentiveTopicModel(ModelBase):
         ctx_weights: jax.Array,
         grad_reg: Callable,
         num_attn_passes: int,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
+    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
         phi_it = phi[batch]
         p_it = norm(phi_it, axis=1)  # (I, T)
 

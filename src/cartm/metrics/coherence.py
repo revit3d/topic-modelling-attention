@@ -1,20 +1,22 @@
+import numpy as np
+import scipy.sparse as sp
+import jax
 import jax.numpy as jnp
 from jax import Array
 
-from cartm.core import EPSILON
 from cartm.metrics.metric_base import Metric
 
 
-class CoherenceMetric(Metric):
+class NPMICoherenceMetric(Metric):
     def __init__(
         self,
-        data: Array,
+        bow: sp.csr_matrix,
         top_k: int,
-        tag: str = None,
+        tag: str | None = None,
     ):
         """
         Args:
-            data: bag of words with shape (D, W), fitted on the corpus.
+            bow: bag of words fitted on the corpus in sparse format.
             top_k: number of top words to calculate pmi.
             tag: metric's name to be displayed in logs.
         """
@@ -22,32 +24,37 @@ class CoherenceMetric(Metric):
             tag = self.__class__.__name__
         super().__init__(tag=tag)
 
-        self.word_doc_indicator = (data > 0).astype(int).T  # (W, D)
-        self.word_occurence = self.word_doc_indicator.sum(axis=1)  # (W, )
+        self.bow = bow.sign().astype(np.uint8).tocsc(copy=False)
+        self.df = np.asarray(self.bow.getnnz(axis=0)).ravel().astype(np.float32)
+        self.n_docs = self.bow.shape[0]
         self.top_k = top_k
 
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs):
-        top_words_per_topic = jnp.argpartition(
-            phi_wt,
-            kth=-self.top_k,
-            axis=0,
-        )[-self.top_k:]  # (W_k, T)
-        n_docs = self.word_doc_indicator.shape[1]
+    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs) -> float:
+        top_words = jnp.argpartition(phi_wt, -self.top_k, axis=0)[-self.top_k:]  # (k, T)
+        top_words = np.asarray(jax.device_get(top_words.T))  # (T, k)
 
-        top_words_per_topic = top_words_per_topic.T  # (T, W_k)
-        top_word_indicator = self.word_doc_indicator[top_words_per_topic]  # (T, W_k, D)
-        top_word_indicator_T = top_word_indicator.transpose(0, 2, 1)  # (T, D, W_k)
+        selected, inv = np.unique(top_words, return_inverse=True)
+        inv = inv.reshape(top_words.shape)
 
-        co_occurrences = top_word_indicator @ top_word_indicator_T  # (T, W_k, W_k)
-        co_occurrences /= n_docs  # normalize probabilities
-        occurrences = self.word_occurence[top_words_per_topic]  # (T, W_k)
-        occurrences /= n_docs  # normalize probabilities
-        pmi = jnp.log(
-            co_occurrences / occurrences[..., None] / occurrences[:, None, :]
-            + EPSILON
-        )  # (T, W_k, W_k)
+        X_sub = self.bow[:, selected]  # (D, m)
+        cooc = (X_sub.T @ X_sub).toarray().astype(np.float32)  # (m, m)
+        df = self.df[selected]
 
-        unique_pmis = jnp.triu(pmi, k=1)  # (T, W_k, W_k)
-        n_pairs = self.top_k * (self.top_k - 1) // 2
-        coherence_per_topic = unique_pmis.sum(axis=(1, 2)) / n_pairs  # (T, )
-        return jnp.mean(coherence_per_topic)
+        p_i = df / self.n_docs
+        p_ij = cooc / self.n_docs
+
+        denom = p_i[:, None] * p_i[None, :]
+        with np.errstate(divide='ignore', invalid='ignore'):
+            pmi = np.log(p_ij / denom)
+            npmi = pmi / (-np.log(p_ij))
+
+        # define zero co-occurrence as -1
+        npmi = np.where(cooc > 0, npmi, -1.0)
+
+        triu = np.triu_indices(self.top_k, k=1)
+        topic_scores = []
+        for topic_idx in inv:
+            topic_npmi = npmi[np.ix_(topic_idx, topic_idx)]
+            topic_scores.append(topic_npmi[triu].mean())
+
+        return float(np.mean(topic_scores))

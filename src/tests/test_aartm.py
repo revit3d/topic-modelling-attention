@@ -1,6 +1,5 @@
 import pytest
 import jax
-import jax.numpy as jnp
 from numpy.testing import assert_allclose
 
 from cartm import AttentiveTopicModel
@@ -21,13 +20,6 @@ def phi(config):
     phi = jax.random.uniform(key=key, shape=(config.n_topics, config.vocab_size))
     phi = calc_norm_matrix_primitive(phi)
     return phi.T
-
-
-@pytest.fixture
-def n_t(config):
-    return jnp.full(
-        shape=(config.n_topics,), fill_value=config.n_words / config.n_topics
-    )
 
 
 def test_step(phi, n_t, data, doc_bounds, config):

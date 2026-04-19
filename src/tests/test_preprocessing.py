@@ -46,12 +46,12 @@ def expected_vocabulary() -> dict:
 
 @pytest.fixture
 def tokenized_data() -> jax.Array:
-    return jnp.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 10, 8])
+    return jnp.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 10, 11, 8])
 
 
 @pytest.fixture
 def document_bounds() -> jax.Array:
-    return jnp.array([0, 3, 7, 11, 14])
+    return jnp.array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0])
 
 
 def test_preprocess_text(raw_data, expected_words):
@@ -94,6 +94,7 @@ def test_fit_transform(raw_data, expected_words, document_bounds):
     assert len(reconstructed_texts2) == len(expected_words_flattened)
     assert reconstructed_texts2 == expected_words_flattened
 
+    assert document_bounds.shape[0] == len(tokens_out2)
     assert doc_bounds_out2.shape == document_bounds.shape
     assert doc_bounds_out2.tolist() == document_bounds.tolist()
 
@@ -110,15 +111,13 @@ def test_batch_loader(tokenized_data, document_bounds):
     batch4_data, batch4_bounds = batch_loader[3]
 
     assert batch1_data.tolist() == [0, 1, 2, 3]
-    assert batch1_bounds.tolist() == [0, 3, 4]
+    assert batch1_bounds.tolist() == [0, 0, 0, 1]
 
     assert batch2_data.tolist() == [4, 5, 6, 7]
-    assert batch2_bounds.tolist() == [0, 3, 4]
+    assert batch2_bounds.tolist() == [0, 0, 0, 1]
 
     assert batch3_data.tolist() == [8, 8, 9, 10]
-    assert batch3_bounds.tolist() == [0, 3, 4]
+    assert batch3_bounds.tolist() == [0, 0, 0, 1]
 
-    assert batch4_data.tolist() == [
-        8,
-    ]
-    assert batch4_bounds.tolist() == [0, 1]
+    assert batch4_data.tolist() == [11, 8]
+    assert batch4_bounds.tolist() == [0, 0]

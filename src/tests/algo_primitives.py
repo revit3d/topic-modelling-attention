@@ -27,14 +27,12 @@ def calc_attn_primitive(
     gamma: float,
 ):
     n_words, n_topics = matrix.shape
-    doc_bounds_prefix = set((ctx_bounds[1:] - 1).tolist())
-    doc_bounds_suffix = set(ctx_bounds[:-1].tolist())
 
     attn = []
     for w in range(n_words):
         prefix_context_vec, prefix_context_weights = [], []
         for i in range(1, ctx_len + 1):
-            if w - i >= 0 and w - i not in doc_bounds_prefix:
+            if w - i >= 0 and not ctx_bounds[w - i + 1]:
                 prefix_context_vec.append(matrix[w - i])
                 prefix_context_weights.append(gamma * (1 - gamma) ** i)
             else:
@@ -42,7 +40,7 @@ def calc_attn_primitive(
 
         suffix_context_vec, suffix_context_weights = [], []
         for i in range(1, ctx_len + 1):
-            if w + i < n_words and w + i not in doc_bounds_suffix:
+            if w + i < n_words and not ctx_bounds[w + i]:
                 suffix_context_vec.append(matrix[w + i])
                 suffix_context_weights.append(gamma * (1 - gamma) ** i)
             else:
