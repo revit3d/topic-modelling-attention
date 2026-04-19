@@ -6,7 +6,7 @@ from numpy.testing import assert_allclose
 
 from cartm import ContextTopicModel
 from cartm.core import get_context_weights_1d
-from cartm.preprocessing import BatchLoader
+from cartm.preprocessing import BatchedCorpusLoader
 import cartm.metrics as mtc
 import cartm.regularization as reg
 from tests.algo_primitives import (
@@ -78,7 +78,7 @@ def test_step(phi, n_t, data, doc_bounds, config):
 
 
 def test_batched_step(model, phi, n_t, data, doc_bounds, config):
-    batches = BatchLoader(data=data, doc_bounds=doc_bounds, batch_size=10)
+    batches = BatchedCorpusLoader(data=data, doc_bounds=doc_bounds, batch_size=10)
     grad_reg = jax.grad(lambda _: 0.0)
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False

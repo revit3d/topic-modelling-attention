@@ -1,4 +1,6 @@
 import re
+import math
+from collections import Counter
 from typing import Sequence, Callable, Iterable
 
 import jax.numpy as jnp
@@ -6,9 +8,7 @@ import numpy as np
 import scipy.sparse as sp
 from jax import Array
 
-from nltk import word_tokenize
 from nltk.corpus import stopwords as default_stopwords
-from nltk.stem import PorterStemmer
 
 
 def build_bow(
@@ -17,7 +17,7 @@ def build_bow(
     vocab_size: int,
 ) -> sp.csr_matrix:
     tokenized_data = np.asarray(tokenized_data, dtype=np.int32)
-    document_bounds = np.asarray(document_bounds, dtype=np.bool)
+    document_bounds = np.asarray(document_bounds, dtype=bool)
 
     n_docs = np.sum(document_bounds) + 1
 
@@ -32,57 +32,221 @@ def build_bow(
     return bow
 
 
-class DatasetPreprocessor:
-    def __init__(
+class CorpusLoader:
+    def __init__(  # noqa (C901)
         self,
         *,
         lower: bool = True,
         vocabulary: dict | None = None,
         preprocessor: Callable[[str], str] | None = None,
         tokenizer: Callable[[str], list[str]] | None = None,
+        token_normalizer: Callable[[str], str] | None = None,
         stopwords: Iterable[str] | None = None,
+        min_token_len: int = 2,
+        max_token_len: int = 20,
+        min_df: int | float = 1,
+        max_df: int | float = 1.0,
     ):
         """
         Convert sequence of raw documents into a sequence of tokens
-        suitable for fitting the model or batching via BatchLoader.
+        suitable for fitting the model or batching via BatchedCorpusLoader.
 
         Args:
-            lower: convert all characters to lowercase before tokenizing.
+            lower: convert all characters to lowercase per token after tokenization.
             vocabulary: mapping (e.g., a dict) where keys are terms and values
                 are unique integers from 0 to len(vocabulary). If not given,
-                a vocabulary is determined from the input documents.
+                a vocabulary is inferred from the input documents.
             preprocessor: override the preprocessing stage.
             tokenizer: override the tokenizer stage.
+            token_normalizer: normalizer applied to each token
+                in splitted text, typically a stemmer or a lemmatizer.
             stopwords: terms to be ignored in tokenized data.
+                If None, uses default english stopwords from nltk module.
+            min_token_len: if length of a normalized token is less than
+                min_token_len, it is ignored.
+            max_token_len: if length of a normalized token is more than
+                max_token_len, it is ignored.
+            min_df: if document frequency of a normalized token is less than
+                min_df, it is ignored. If float in range [0.0, 1.0],
+                the parameter represents a proportion of documents,
+                integer absolute counts.
+            max_df: if document frequency of a normalized token is more than
+                max_df, it is ignored. If float in range [0.0, 1.0],
+                the parameter represents a proportion of documents,
+                integer absolute counts.
         """
         self._lower = lower
         self._vocab = vocabulary
-        self._stemmer = PorterStemmer()
+        self._preprocessor = preprocessor
+        self._tokenizer = tokenizer
+        self._token_normalizer = token_normalizer
+        self._min_token_len = min_token_len
+        self._max_token_len = max_token_len
+        self._min_df = min_df
+        self._max_df = max_df
+        self._cached_tokens = None
+
+        if vocabulary is not None:
+            if not all(isinstance(k, str) for k in vocabulary):
+                raise TypeError("Vocabulary keys must be strings")
+            if not all(isinstance(v, int) for v in vocabulary.values()):
+                raise TypeError("Vocabulary values must be integer ids")
+            ids = list(vocabulary.values())
+            if sorted(ids) != list(range(len(ids))):
+                raise ValueError("Vocabulary should contain contiguous token ids starting at 0")
 
         if preprocessor is not None and not callable(preprocessor):
-            raise TypeError(
-                f"Preprocessor should be callable if provided, "
-                f"got type {type(preprocessor)}."
-            )
-        self._preprocessor = preprocessor
+            raise TypeError(f"Preprocessor must be callable, got {type(preprocessor)}")
 
         if tokenizer is not None and not callable(tokenizer):
-            raise TypeError(
-                f"Tokenizer should be callable if provided, "
-                f"got type {type(tokenizer)}."
-            )
-        self._tokenizer = tokenizer
+            raise TypeError(f"Tokenizer should be callable, got {type(tokenizer)}")
+
+        if token_normalizer is not None and not callable(token_normalizer):
+            raise TypeError(f"Token normalizer should be callable, got {type(token_normalizer)}")
 
         if stopwords is None:
-            self._stopwords = set(default_stopwords.words("english"))
-        else:
-            self._stopwords = set(stopwords)
+            stopwords = default_stopwords.words("english")
+        self._stopwords = set(stopwords)
+        if self._lower:
+            self._stopwords = {w.lower() for w in self._stopwords}
 
-    def fit(self, data: Sequence[str]) -> dict:
+        if min_token_len < 1:
+            raise ValueError("min_token_len must be >= 1")
+        if max_token_len < min_token_len:
+            raise ValueError("max_token_len must be >= min_token_len")
+
+        if isinstance(min_df, float):
+            if not (0.0 <= min_df <= 1.0):
+                raise ValueError("min_df as float must be in [0.0, 1.0]")
+        elif min_df < 1:
+            raise ValueError("min_df as int must be >= 1")
+
+        if isinstance(max_df, float):
+            if not (0.0 <= max_df <= 1.0):
+                raise ValueError("max_df as float must be in [0.0, 1.0]")
+        elif max_df < 1:
+            raise ValueError("max_df as int must be >= 1")
+
+    def _preprocess_text(self, text: str) -> str:
+        """Apply preprocessing to a single document."""
+        if self._preprocessor is not None:
+            text = self._preprocessor(text)
+        return text
+
+    def _tokenize(self, text: str) -> list[str]:
+        """Apply tokenization to a single document."""
+        if self._tokenizer is not None:
+            tokens = self._tokenizer(text)
+        else:
+            tokens = re.findall(r"[a-zA-Z]+", text)
+
+        cleaned = []
+        for token in tokens:
+            if self._lower:
+                token = token.lower()
+
+            if token in self._stopwords:
+                continue
+
+            if self._token_normalizer is not None:
+                token = self._token_normalizer(token)
+                if token in self._stopwords:
+                    continue
+
+            if not (self._min_token_len <= len(token) <= self._max_token_len):
+                continue
+
+            if token:
+                cleaned.append(token)
+
+        return cleaned
+
+    def process_doc(self, doc: str) -> list[str]:
+        text = self._preprocess_text(doc)
+        return self._tokenize(text)
+
+    def fit(self, data: Sequence[str]) -> "CorpusLoader":
         """Learn a vocabulary dictionary of all tokens in the raw documents."""
-        texts_tokenized = [self._preprocess_text(doc) for doc in data]
-        self._vocab = self._create_vocabulary(texts_tokenized)
-        return self.vocabulary
+        n_docs = len(data)
+        doc_freq = Counter()
+
+        if isinstance(self._min_df, float):
+            min_df = math.ceil(self._min_df * n_docs)
+        else:
+            min_df = self._min_df
+
+        if isinstance(self._max_df, float):
+            max_df = math.floor(self._max_df * n_docs)
+        else:
+            max_df = self._max_df
+
+        if min_df > max_df:
+            raise ValueError("min_df must be <= max_df")
+
+        self._cached_tokens = []
+        for doc in data:
+            tokens = self.process_doc(doc)
+            self._cached_tokens.append(tokens)
+            doc_freq.update(set(tokens))
+
+        vocab_words = [
+            word
+            for word, df in doc_freq.items()
+            if df >= min_df and df <= max_df
+        ]
+        vocab_words.sort()
+
+        self._vocab = {word: i for i, word in enumerate(vocab_words)}
+        return self
+
+    def _transform_impl(
+        self,
+        data: Iterable[str] | Iterable[list[str]],
+        return_doc_bounds: bool = True,
+        preprocess: bool = True,
+    ) -> Array | tuple[Array, Array]:
+        if self._vocab is None:
+            raise ValueError("Vocabulary is not fitted. Call fit() first.")
+
+        flat_data = []
+        doc_bounds = []
+        for doc in data:
+            tokens = self.process_doc(doc) if preprocess else doc
+            encoded = [self._vocab[word] for word in tokens if word in self._vocab]
+            flat_data.extend(encoded)
+            doc_bounds.append(len(flat_data))
+        doc_bounds = doc_bounds[:-1]
+
+        flat_data = np.array(flat_data, dtype=np.int32)
+        doc_bounds_ohe = np.zeros_like(flat_data, dtype=bool)
+        doc_bounds_ohe[doc_bounds] = True
+        flat_data_jnp = jnp.array(flat_data, dtype=jnp.int32)
+        doc_bounds_jnp = jnp.array(doc_bounds_ohe, dtype=jnp.bool_)
+
+        if return_doc_bounds:
+            return flat_data_jnp, doc_bounds_jnp
+        return flat_data_jnp
+
+    def transform(
+        self,
+        data: Iterable[str],
+        *,
+        return_doc_bounds: bool = True,
+    ) -> Array | tuple[Array, Array]:
+        """
+        Return a flattened list of all terms from all documents.
+
+        Args:
+            data: a sequence of strings.
+            return_doc_bounds: if True, also returns boolean array where
+                True stands at an index of the first token in each document
+                except for the first one.
+        """
+        return self._transform_impl(
+            data=data,
+            return_doc_bounds=return_doc_bounds,
+            preprocess=True,
+        )
 
     def fit_transform(
         self,
@@ -96,74 +260,24 @@ class DatasetPreprocessor:
 
         Args:
             data: a sequence of strings.
-            return_doc_bounds: if True, returns ohe of document bounds
-                as the second value (True at the index of the first token
-                in each document).
+            return_doc_bounds: if True, also returns boolean array where
+                True stands at an index of the first token in each document
+                except for the first one.
         """
-        texts_tokenized = [self._preprocess_text(doc) for doc in data]
-
-        if self._vocab is None:
-            self._vocab = self._create_vocabulary(texts_tokenized)
-
-        flat_data = []
-        doc_bounds = []
-        for text in texts_tokenized:
-            encoded = [self._vocab[word] for word in text if word in self._vocab]
-            flat_data.extend(encoded)
-            doc_bounds.append(len(flat_data))
-        doc_bounds = doc_bounds[:-1]
-
-        flat_data = np.array(flat_data, dtype=np.int32)
-        doc_bounds_ohe = np.zeros_like(flat_data, dtype=np.bool)
-        doc_bounds_ohe[doc_bounds] = True
-        flat_data_jnp = jnp.array(flat_data, dtype=jnp.int32)
-        doc_bounds_jnp = jnp.array(doc_bounds_ohe, dtype=jnp.bool)
-
-        if return_doc_bounds:
-            return flat_data_jnp, doc_bounds_jnp
-        return flat_data_jnp
-
-    def _preprocess_text(self, text: str) -> list[str]:
-        """Apply preprocessing and tokenization to a single document."""
-        # Preprocessing stage
-        if self._preprocessor is None:
-            if self._lower:
-                text = text.lower()
-                text = re.sub(r"[^a-z]", " ", text)
-            else:
-                text = re.sub(r"[^A-Za-z]", " ", text)
-        else:
-            text = self._preprocessor(text)
-
-        # tokenization stage
-        if self._tokenizer is None:
-            text_tokenized = word_tokenize(text)
-        else:
-            text_tokenized = self._tokenizer(text)
-
-        # removing stopwords
-        text_tokenized = [
-            word for word in text_tokenized if word not in self._stopwords
-        ]
-
-        if self._tokenizer is None:
-            text_tokenized = [self._stemmer.stem(token) for token in text_tokenized]
-
-        return text_tokenized
-
-    @staticmethod
-    def _create_vocabulary(texts: list[list[str]]) -> dict[str, int]:
-        """Create vocabulary from all unique terms in tokenized corpus."""
-        unique_words = {word for text in texts for word in text}
-        return {word: token for token, word in enumerate(sorted(unique_words))}
+        self.fit(data)
+        return self._transform_impl(
+            data=self._cached_tokens,
+            return_doc_bounds=return_doc_bounds,
+            preprocess=False,
+        )
 
     @property
-    def vocabulary(self):
-        """Mapping used for tokenizing terms."""
+    def vocabulary(self) -> dict[str, int] | None:
+        """Mapping token -> id."""
         return self._vocab
 
 
-class BatchLoader:
+class BatchedCorpusLoader:
     def __init__(self, data: Array, doc_bounds: Array, *, batch_size: int = 10000):
         """
         Split tokenized data into batches. Instance of this class can be passed

@@ -2,8 +2,9 @@ import pytest
 
 import jax
 import jax.numpy as jnp
+from nltk.stem import PorterStemmer
 
-from cartm.preprocessing import DatasetPreprocessor, BatchLoader
+from cartm.preprocessing import CorpusLoader, BatchedCorpusLoader
 
 
 @pytest.fixture
@@ -54,31 +55,27 @@ def document_bounds() -> jax.Array:
     return jnp.array([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0])
 
 
-def test_preprocess_text(raw_data, expected_words):
-    preprocessor = DatasetPreprocessor()
+@pytest.fixture
+def preprocessor() -> CorpusLoader:
+    stemmer = PorterStemmer()
+    return CorpusLoader(token_normalizer=lambda doc: stemmer.stem(doc))
+
+
+def test_preprocess_text(raw_data, expected_words, preprocessor):
     for text, expected in zip(raw_data, expected_words):
-        tokens = preprocessor._preprocess_text(text)
+        tokens = preprocessor.process_doc(text)
         assert tokens == expected
 
 
-def test_create_vocabulary(raw_data, expected_words, expected_vocabulary):
-    preprocessor = DatasetPreprocessor()
-    vocab_out1 = preprocessor._create_vocabulary(expected_words)
-    vocab_out2 = preprocessor.fit(raw_data)
-    vocab_out3 = preprocessor.vocabulary
+def test_fit(raw_data, expected_vocabulary, preprocessor):
+    preprocessor.fit(raw_data)
+    vocab_out = preprocessor.vocabulary
 
-    assert len(vocab_out1) == len(expected_vocabulary)
-    assert set(vocab_out1.keys()) == set(expected_vocabulary.keys())
-
-    assert len(vocab_out2) == len(expected_vocabulary)
-    assert set(vocab_out2.keys()) == set(expected_vocabulary.keys())
-
-    assert len(vocab_out3) == len(expected_vocabulary)
-    assert set(vocab_out3.keys()) == set(expected_vocabulary.keys())
+    assert len(vocab_out) == len(expected_vocabulary)
+    assert set(vocab_out.keys()) == set(expected_vocabulary.keys())
 
 
-def test_fit_transform(raw_data, expected_words, document_bounds):
-    preprocessor = DatasetPreprocessor()
+def test_fit_transform(raw_data, expected_words, document_bounds, preprocessor):
     tokens_out1 = preprocessor.fit_transform(raw_data, return_doc_bounds=False)
     tokens_out2, doc_bounds_out2 = preprocessor.fit_transform(raw_data)
 
@@ -101,7 +98,7 @@ def test_fit_transform(raw_data, expected_words, document_bounds):
 
 def test_batch_loader(tokenized_data, document_bounds):
     data, doc_bounds = tokenized_data, document_bounds
-    batch_loader = BatchLoader(data, doc_bounds, batch_size=4)
+    batch_loader = BatchedCorpusLoader(data, doc_bounds, batch_size=4)
 
     assert len(batch_loader) == 4
 
