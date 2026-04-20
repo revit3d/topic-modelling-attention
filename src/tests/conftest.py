@@ -46,6 +46,4 @@ def phi(config: TestConfig):
 
 @pytest.fixture(scope="session")
 def n_t(config: TestConfig):
-    return jnp.full(
-        shape=(config.n_topics,), fill_value=config.n_words / config.n_topics
-    )
+    return jnp.ones(config.n_topics)

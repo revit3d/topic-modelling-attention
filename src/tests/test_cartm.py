@@ -62,7 +62,7 @@ def test_step(phi, n_t, data, doc_bounds, config):
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
-    phi_it_model, phi_new_model, theta_model, n_t_model = ContextTopicModel._step(
+    phi_it_model, phi_new_model, theta_model, n_t_model, *_ = ContextTopicModel._step(
         batch=data,
         ctx_bounds=doc_bounds,
         phi=phi,
@@ -83,6 +83,7 @@ def test_batched_step(model, phi, n_t, data, doc_bounds, config):
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
+
     _ = model._batched_step_wrapper(
         batches=batches,
         phi=phi,
@@ -91,6 +92,17 @@ def test_batched_step(model, phi, n_t, data, doc_bounds, config):
         grad_reg=grad_reg,
         num_attn_passes=1,
         lr=0.01,
+        num_batches_before_update=-1,
+    )
+    _ = model._batched_step_wrapper(
+        batches=batches,
+        phi=phi,
+        n_t=n_t,
+        ctx_weights=ctx_weights,
+        grad_reg=grad_reg,
+        num_attn_passes=1,
+        lr=0.01,
+        num_batches_before_update=1,
     )
 
 

@@ -68,7 +68,7 @@ def test_step(phi, n_t, data, doc_bounds, config):
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
-    phi_it_model, phi_model, theta_model, n_t_model = AttentiveTopicModel._step(
+    phi_it_model, phi_model, theta_model, n_t_model, *_ = AttentiveTopicModel._step(
         batch=data,
         ctx_bounds=doc_bounds,
         phi=phi,

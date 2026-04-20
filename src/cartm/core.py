@@ -33,6 +33,12 @@ def get_context_weights_1d(ctx_len: int, gamma: float, self_aware: bool) -> jax.
     return jnp.array(ctx_weights)  # (2C + 1, )
 
 
+import jax
+import jax.numpy as jnp
+
+EPSILON = 1e-8
+
+
 @jax.jit
 def calc_attn(
     matrix: jax.Array,
@@ -45,31 +51,25 @@ def calc_attn(
     offsets = jnp.arange(-ctx_len, ctx_len + 1)
     base_idx = jnp.arange(batch_size)
 
-    def compute_for_offset(d, w):
-        idx = base_idx + d
+    idx = base_idx[None, :] + offsets[:, None]
+    valid = (idx >= 0) & (idx < batch_size)
+    idx_clipped = jnp.clip(idx, 0, batch_size - 1)
 
-        valid = (idx >= 0) & (idx < batch_size)
-        idx_clipped = jnp.clip(idx, 0, batch_size - 1)
-
-        gathered_matrix = matrix[idx_clipped]
-        gathered_doc = doc_ids[idx_clipped]
-
-        mask = valid & (gathered_doc == doc_ids)
-
-        return mask, gathered_matrix, w
-
-    mask, shifted, w = jax.vmap(compute_for_offset)(offsets, ctx_weights)
+    shifted = matrix[idx_clipped]
+    gathered_doc = doc_ids[idx_clipped]
+    mask = valid & (gathered_doc == doc_ids[None, :])
 
     mask_f = mask.astype(matrix.dtype)
+    coeff = ctx_weights[:, None] * mask_f
 
-    denom = jnp.sum(w[:, None] * mask_f, axis=0)
+    denom = jnp.sum(coeff, axis=0)
     inv_denom = jnp.where(denom > EPSILON, 1.0 / denom, 0.0)
 
-    coeff = w[:, None] * mask_f * inv_denom
-
-    out = jnp.einsum('kn,knh->nh', coeff, shifted)
+    coeff = coeff * inv_denom[None, :]
+    out = jnp.sum(coeff[..., None] * shifted, axis=0)
 
     return out
+
 
 
 @jax.jit
@@ -84,25 +84,27 @@ def calc_attn_transposed(
     offsets = jnp.arange(-ctx_len, ctx_len + 1)
     base_idx = jnp.arange(batch_size)
 
-    def compute_for_offset(d, w):
-        idx = base_idx + d
+    nbr_idx = base_idx[None, :] + offsets[:, None]
+    nbr_valid = (nbr_idx >= 0) & (nbr_idx < batch_size)
+    nbr_idx_safe = jnp.clip(nbr_idx, 0, batch_size - 1)
 
-        valid = (idx >= 0) & (idx < batch_size)
-        idx_clipped = jnp.clip(idx, 0, batch_size - 1)
+    shifted_doc_ids = doc_ids[nbr_idx_safe]
+    same_doc = shifted_doc_ids == doc_ids[None, :]
+    mask = nbr_valid & same_doc
 
-        same_doc = doc_ids[idx_clipped] == doc_ids
-
-        mask = valid & same_doc
-        return mask, w, idx_clipped
-
-    mask, w, idx = jax.vmap(compute_for_offset)(offsets, ctx_weights)
-    mask_f = mask.astype(matrix.dtype)
-
-    denom = jnp.sum(w[:, None] * mask_f, axis=0)
+    weights = ctx_weights[:, None]
+    denom = jnp.sum(weights * mask.astype(matrix.dtype), axis=0)
     inv_denom = jnp.where(denom > EPSILON, 1.0 / denom, 0.0)
 
-    coeff = w[:, None] * mask_f * inv_denom  # (2C + 1, I)
-    gathered = matrix[idx]  # (2C + 1, I, T)
-    out = jnp.sum(coeff[:, :, None] * gathered, axis=0)
+    coeff = weights * mask.astype(matrix.dtype) * inv_denom[None, :]  # (2C + 1, I)
 
+    src_idx = base_idx[None, :] - offsets[:, None]
+    src_valid = (src_idx >= 0) & (src_idx < batch_size)
+    src_idx_safe = jnp.clip(src_idx, 0, batch_size - 1)
+
+    gathered_matrix = matrix[src_idx_safe]  # (2C + 1, I, T)
+    gathered_coeff = coeff[jnp.arange(coeff.shape[0])[:, None], src_idx_safe]
+    gathered_coeff = gathered_coeff * src_valid.astype(matrix.dtype)
+
+    out = jnp.sum(gathered_coeff[..., None] * gathered_matrix, axis=0)
     return out
