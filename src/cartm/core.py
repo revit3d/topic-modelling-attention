@@ -33,12 +33,6 @@ def get_context_weights_1d(ctx_len: int, gamma: float, self_aware: bool) -> jax.
     return jnp.array(ctx_weights)  # (2C + 1, )
 
 
-import jax
-import jax.numpy as jnp
-
-EPSILON = 1e-8
-
-
 @jax.jit
 def calc_attn(
     matrix: jax.Array,
@@ -69,7 +63,6 @@ def calc_attn(
     out = jnp.sum(coeff[..., None] * shifted, axis=0)
 
     return out
-
 
 
 @jax.jit
