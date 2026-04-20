@@ -120,7 +120,7 @@ class AttentiveTopicModel(ModelBase):
                 )
             ):
                 phi_step = self._update_phi(
-                    phi=phi, n_wt=n_wt_step, N_wt=N_wt_step, grad_reg=grad_reg
+                    phi=phi, n_wt=n_wt_total, N_wt=N_wt_total, grad_reg=grad_reg
                 )
                 phi_new = phi_new * (1 - lr) + phi_step * lr
                 n_t_new = n_t_new * (1 - lr) + n_t_total * lr
@@ -137,8 +137,9 @@ class AttentiveTopicModel(ModelBase):
             phi_new = self._update_phi(
                 phi=phi, n_wt=n_wt_total, N_wt=N_wt_total, grad_reg=grad_reg
             )
-            n_t = n_t_total
-        return phi_it, phi_new, theta, n_t, batch_all
+            n_t_new = n_t_total
+
+        return phi_it, phi_new, theta, n_t_new, batch_all
 
     def _init_state(self, *, seed: int):
         key = jax.random.key(seed)
