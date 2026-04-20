@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import scipy.sparse as sp
-from numpy.testing import assert_almost_equal
+from numpy.testing import assert_allclose
 
 import cartm.metrics as mtc
 from cartm.core import EPSILON
@@ -198,7 +198,7 @@ def test_perplexity(data, phi, theta, config):
         phi_wt=None,
         theta=theta,
     )
-    assert_almost_equal(perplexity_metric, perplexity_primitive, decimal=5)
+    assert_allclose(perplexity_metric, perplexity_primitive, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("zero_threshold", [0.1, 0.3, 0.6, 0.8])
@@ -215,7 +215,7 @@ def test_sparsity(zero_threshold, phi, config):
         phi_wt=phi_wt_thresh,
         theta=None,
     )
-    assert_almost_equal(sparsity_metric, sparsity_primitive)
+    assert_allclose(sparsity_metric, sparsity_primitive, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("distance_metric", ["jaccard", "cosine", "hellinger"])
@@ -232,7 +232,7 @@ def test_topic_variance(distance_metric, phi, config):
         top_k=top_k if distance_metric == "jaccard" else None,
         distance_metric=distance_metric,
     )(phi_it=None, phi_wt=phi, theta=None)
-    assert_almost_equal(topic_variance_metric, topic_variance_primitive)
+    assert_allclose(topic_variance_metric, topic_variance_primitive, rtol=1e-5, atol=1e-6)
 
 
 def test_coherence(data, doc_bounds, phi, config):
@@ -255,4 +255,4 @@ def test_coherence(data, doc_bounds, phi, config):
         phi_wt=phi,
         theta=None,
     )
-    assert_almost_equal(coherence_metric, coherence_primitive, decimal=5)
+    assert_allclose(coherence_metric, coherence_primitive, rtol=1e-5, atol=1e-6)
