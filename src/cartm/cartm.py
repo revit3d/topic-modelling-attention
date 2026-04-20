@@ -83,7 +83,7 @@ class ContextTopicModel(ModelBase):
         n_t_new = jnp.sum(p_it, axis=0)  # (T, )
 
         # update phi_wt = p(w|t) matrix
-        phi_new = jnp.zeros_like(phi).at[batch].add(p_it)
+        phi_new = jax.ops.segment_sum(p_it, batch, phi.shape[0])
         phi_new -= phi * grad_reg(phi)  # (W, T)
         phi_new = norm(phi_new, axis=0)  # (W, T)
 

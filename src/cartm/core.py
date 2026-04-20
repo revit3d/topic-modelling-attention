@@ -33,59 +33,6 @@ def get_context_weights_1d(ctx_len: int, gamma: float, self_aware: bool) -> jax.
     return jnp.array(ctx_weights)  # (2C + 1, )
 
 
-def _shift_1d(x: jax.Array, offset: int) -> jax.Array:
-    n = x.shape[0]
-
-    if offset == 0:
-        return x
-
-    if offset > 0:
-        pad = jnp.zeros((offset,), dtype=x.dtype)
-        return jnp.concatenate([x[offset:], pad], axis=0)
-
-    k = -offset
-    pad = jnp.zeros((k,), dtype=x.dtype)
-    return jnp.concatenate([pad, x[: n - k]], axis=0)
-
-
-def _shift_2d(x: jax.Array, offset: int) -> jax.Array:
-    n, h = x.shape
-
-    if offset == 0:
-        return x
-
-    if offset > 0:
-        pad = jnp.zeros((offset, h), dtype=x.dtype)
-        return jnp.concatenate([x[offset:], pad], axis=0)
-
-    k = -offset
-    pad = jnp.zeros((k, h), dtype=x.dtype)
-    return jnp.concatenate([pad, x[: n - k]], axis=0)
-
-
-def _valid_mask(length: int, offset: int) -> jax.Array:
-    if offset == 0:
-        return jnp.ones((length,), dtype=bool)
-
-    if offset > 0:
-        return jnp.concatenate(
-            [
-                jnp.ones((length - offset,), dtype=bool),
-                jnp.zeros((offset,), dtype=bool),
-            ],
-            axis=0,
-        )
-
-    k = -offset
-    return jnp.concatenate(
-        [
-            jnp.zeros((k,), dtype=bool),
-            jnp.ones((length - k,), dtype=bool),
-        ],
-        axis=0,
-    )
-
-
 @jax.jit
 def calc_attn(
     matrix: jax.Array,
@@ -95,26 +42,32 @@ def calc_attn(
     batch_size, _ = matrix.shape
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
     doc_ids = jnp.cumsum(ctx_bounds)
+    offsets = jnp.arange(-ctx_len, ctx_len + 1)
+    base_idx = jnp.arange(batch_size)
 
-    offsets = range(-ctx_len, ctx_len + 1)
-    denom = jnp.zeros((batch_size,), dtype=matrix.dtype)
-    for k, d in enumerate(offsets):
-        valid = _valid_mask(batch_size, d)
-        same_doc = _shift_1d(doc_ids, d) == doc_ids
-        mask = valid & same_doc
-        denom = denom + ctx_weights[k] * mask.astype(matrix.dtype)
+    def compute_for_offset(d, w):
+        idx = base_idx + d
 
+        valid = (idx >= 0) & (idx < batch_size)
+        idx_clipped = jnp.clip(idx, 0, batch_size - 1)
+
+        gathered_matrix = matrix[idx_clipped]
+        gathered_doc = doc_ids[idx_clipped]
+
+        mask = valid & (gathered_doc == doc_ids)
+
+        return mask, gathered_matrix, w
+
+    mask, shifted, w = jax.vmap(compute_for_offset)(offsets, ctx_weights)
+
+    mask_f = mask.astype(matrix.dtype)
+
+    denom = jnp.sum(w[:, None] * mask_f, axis=0)
     inv_denom = jnp.where(denom > EPSILON, 1.0 / denom, 0.0)
-    out = jnp.zeros_like(matrix)
-    for k, d in enumerate(offsets):
-        valid = _valid_mask(batch_size, d)
-        same_doc = _shift_1d(doc_ids, d) == doc_ids
-        mask = valid & same_doc
 
-        coeff = ctx_weights[k] * mask.astype(matrix.dtype) * inv_denom  # (I, )
-        shifted = _shift_2d(matrix, d)  # shifted[i] = matrix[i + d]
+    coeff = w[:, None] * mask_f * inv_denom
 
-        out = out + coeff[:, None] * shifted
+    out = jnp.einsum('kn,knh->nh', coeff, shifted)
 
     return out
 
@@ -128,24 +81,28 @@ def calc_attn_transposed(
     batch_size, _ = matrix.shape
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
     doc_ids = jnp.cumsum(ctx_bounds)
+    offsets = jnp.arange(-ctx_len, ctx_len + 1)
+    base_idx = jnp.arange(batch_size)
 
-    offsets = range(-ctx_len, ctx_len + 1)
-    denom = jnp.zeros((batch_size,), dtype=matrix.dtype)
-    for k, d in enumerate(offsets):
-        valid = _valid_mask(batch_size, d)
-        same_doc = _shift_1d(doc_ids, d) == doc_ids
+    def compute_for_offset(d, w):
+        idx = base_idx + d
+
+        valid = (idx >= 0) & (idx < batch_size)
+        idx_clipped = jnp.clip(idx, 0, batch_size - 1)
+
+        same_doc = doc_ids[idx_clipped] == doc_ids
+
         mask = valid & same_doc
-        denom = denom + ctx_weights[k] * mask.astype(matrix.dtype)
+        return mask, w, idx_clipped
 
+    mask, w, idx = jax.vmap(compute_for_offset)(offsets, ctx_weights)
+    mask_f = mask.astype(matrix.dtype)
+
+    denom = jnp.sum(w[:, None] * mask_f, axis=0)
     inv_denom = jnp.where(denom > EPSILON, 1.0 / denom, 0.0)
-    out = jnp.zeros_like(matrix)
-    for k, d in enumerate(offsets):
-        valid = _valid_mask(batch_size, d)
-        same_doc = _shift_1d(doc_ids, d) == doc_ids
-        mask = valid & same_doc
 
-        coeff = ctx_weights[k] * mask.astype(matrix.dtype) * inv_denom  # (I, )
-        contrib = coeff[:, None] * matrix
-        out = out + _shift_2d(contrib, -d)
+    coeff = w[:, None] * mask_f * inv_denom  # (2C + 1, I)
+    gathered = matrix[idx]  # (2C + 1, I, T)
+    out = jnp.sum(coeff[:, :, None] * gathered, axis=0)
 
     return out
