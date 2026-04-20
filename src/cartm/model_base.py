@@ -59,11 +59,12 @@ class ModelBase(ABC):
                 self.add_metric(metric)
 
     @abstractmethod
-    def _init_state(self, *, seed: int, data_size: int):
+    def _init_state(self, *, seed: int):
         pass
 
     @staticmethod
     @abstractmethod
+    @jax.jit
     def _step(
         batch: jax.Array,
         ctx_bounds: jax.Array,
@@ -154,6 +155,7 @@ class ModelBase(ABC):
             if verbose > 1:
                 print(f"    {tag}: {value:.04f}")
 
+    @abstractmethod
     def _batched_step_wrapper(
         self,
         *,
@@ -164,33 +166,9 @@ class ModelBase(ABC):
         grad_reg: Callable,
         num_attn_passes: int,
         lr: float,
+        num_batches_before_update: int,
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-        phi_new = phi.copy()
-        n_t_new = n_t.copy()
-        phi_it = []
-        theta = []
-        batch_all = []
-
-        for batch, ctx_bounds_batch in batches:
-            phi_it_step, phi_step, theta_step, n_t_step = self._step(
-                batch=batch,
-                ctx_bounds=ctx_bounds_batch,
-                phi=phi,
-                n_t=n_t,
-                ctx_weights=ctx_weights,
-                grad_reg=grad_reg,
-                num_attn_passes=num_attn_passes,
-            )
-            phi_new = phi_new * (1 - lr) + phi_step * lr
-            n_t_new = n_t_new * (1 - lr) + n_t_step * lr
-            phi_it.append(phi_it_step)
-            theta.append(theta_step)
-            batch_all.append(batch)
-
-        phi_it = jnp.concatenate(phi_it).reshape(-1, self.n_topics)
-        theta = jnp.concatenate(theta).reshape(-1, self.n_topics)
-        batch_all = jnp.concatenate(batch_all).reshape(-1)
-        return phi_it, phi_new, theta, n_t_new, batch_all
+        pass
 
     def fit(
         self,
@@ -198,6 +176,7 @@ class ModelBase(ABC):
         ctx_bounds: jax.Array = None,
         *,
         lr: float = 0.1,
+        num_batches_before_update: int = -1,
         num_attn_passes: int = 1,
         max_iter: int = 1000,
         tol: float = 1e-3,
@@ -205,15 +184,21 @@ class ModelBase(ABC):
         seed: int = 0,
     ):
         """
-        Fit the model with the corpus of documents.
+        Fit the model with the corpus of documents. Note that is you are fitting
+        on batches, default model behavior is to accumulate statistics across all
+        batches and then update state once. If you want to update state every
+        n batches, see `num_batches_before_update` and `lr` parameters.
 
         Args:
             data: array of shape (I, ), containing tokenized words of each document
                 or iterable returning tuples (data_batch, ctx_bounds_batch).
             ctx_bounds: array of shape (B, ), containing bounds for context. Words
                 beyond the bound are ignored in the context.
-            lr: coefficient for updating phi in online mode:
+            lr: coefficient for updating phi in EMA mode:
                 phi = phi_prev * (1 - lr) + phi_new * lr
+            num_batches_before_update: if positive, batched algorithm updates phi
+                with EMA logic, phi_new is calculated from statistics accumulated on
+                num_batches_before_update batches.
             num_attn_passes: number of E-steps on each iteration.
             max_iter: max number of iterations.
             tol: early stopping threshold.
@@ -224,7 +209,7 @@ class ModelBase(ABC):
             seed: random seed.
         """
         assert num_attn_passes > 0
-        self._init_state(seed=seed, data_size=len(data))
+        self._init_state(seed=seed)
         grad_regularization = self._compose_regularizations()
 
         for it in range(max_iter):
@@ -238,10 +223,11 @@ class ModelBase(ABC):
                     grad_reg=grad_regularization,
                     num_attn_passes=num_attn_passes,
                     lr=lr,
+                    num_batches_before_update=num_batches_before_update,
                 )
             else:
                 # non-batched input
-                phi_it, phi_new, theta, self.n_t = self._step(
+                phi_it, phi_new, theta, self.n_t, *_ = self._step(
                     batch=data,
                     ctx_bounds=ctx_bounds,
                     phi=self.phi,
