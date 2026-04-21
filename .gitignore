@@ -164,7 +164,7 @@ cython_debug/
 
 # local data
 data/
-experiments-*.ipynb
+*.csv
 
 # VSCode configuration
 .vscode
