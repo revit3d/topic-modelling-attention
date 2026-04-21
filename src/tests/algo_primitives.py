@@ -65,6 +65,47 @@ def calc_attn_primitive(
     return jnp.array(attn)
 
 
+def calc_attn_transposed_primitive(
+    matrix: jax.Array,
+    ctx_bounds: jax.Array,
+    ctx_len: int,
+    gamma: float,
+):
+    n_words, n_topics = matrix.shape
+
+    transposed_attn = np.zeros((n_words, n_topics), dtype=matrix.dtype)
+    for w in range(n_words):
+        prefix_positions, prefix_weights = [], []
+        for i in range(1, ctx_len + 1):
+            if w - i >= 0 and not ctx_bounds[w - i + 1]:
+                prefix_positions.append(w - i)
+                prefix_weights.append(gamma * (1 - gamma) ** i)
+            else:
+                break
+
+        suffix_positions, suffix_weights = [], []
+        for i in range(1, ctx_len + 1):
+            if w + i < n_words and not ctx_bounds[w + i]:
+                suffix_positions.append(w + i)
+                suffix_weights.append(gamma * (1 - gamma) ** i)
+            else:
+                break
+
+        context_positions = prefix_positions[::-1] + suffix_positions
+        context_weights = np.array(prefix_weights[::-1] + suffix_weights)
+
+        if context_weights.shape[0] == 0:
+            continue
+
+        context_weights = calc_norm_vector_primitive(context_weights)
+
+        for pos, weight in zip(context_positions, context_weights):
+            for t in range(n_topics):
+                transposed_attn[pos][t] += weight * matrix[w][t]
+
+    return transposed_attn
+
+
 def calc_theta_primitive(
     data: jax.Array,
     phi_hatch: jax.Array,
