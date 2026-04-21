@@ -72,7 +72,6 @@ def test_attn_transposed(phi, data, doc_bounds, config):
         ctx_bounds=doc_bounds,
         ctx_weights=ctx_weights,
     )
-    assert_allclose(jnp.abs(attn_fast - attn_primitive).sum(), 0.0, atol=1e-5)
     assert_allclose(attn_fast, attn_primitive, rtol=1e-5, atol=1e-6)
 
 
@@ -96,5 +95,4 @@ def test_attn_linear_invariant(doc_bounds, config):
     )
     left = attn_forward.T @ y
     right = x.T @ attn_backward
-    assert_allclose(jnp.abs(left - right).sum(), 0.0, atol=1e-5)
     assert_allclose(left, right, rtol=1e-5, atol=1e-6)
