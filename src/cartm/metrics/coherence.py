@@ -57,4 +57,4 @@ class NPMICoherenceMetric(Metric):
             topic_npmi = npmi[np.ix_(topic_idx, topic_idx)]
             topic_scores.append(topic_npmi[triu].mean())
 
-        return float(np.mean(topic_scores))
+        return np.mean(topic_scores).item()

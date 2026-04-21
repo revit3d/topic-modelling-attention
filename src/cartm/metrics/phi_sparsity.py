@@ -8,7 +8,7 @@ from cartm.metrics.metric_base import Metric
 
 
 class SparsityMetric(Metric):
-    def __init__(self, tag: str = None, eps: float = 1e-12):
+    def __init__(self, tag: str | None = None, eps: float = 1e-12):
         """
         Args:
             tag: metric's name to be displayed in logs.

@@ -9,7 +9,7 @@ from cartm.metrics.metric_base import Metric
 
 
 class PerplexityMetric(Metric):
-    def __init__(self, tag: str = None):
+    def __init__(self, tag: str | None = None):
         """
         Args:
             tag: metric's name to be displayed in logs.
@@ -20,7 +20,7 @@ class PerplexityMetric(Metric):
 
     @partial(jax.jit, static_argnums=0)
     def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs) -> float:
-        num_words = len(phi_it)
+        num_words = phi_it.shape[0]
 
         # p(w_i|C_i) = p(w_i|t)p(t|C_i) = \sum_t (phi_it * theta_it)
         p_wi = jnp.sum(theta * phi_it, axis=1)

@@ -60,5 +60,6 @@ class Metric(ABC):
             theta=theta,
             **kwargs,
         )
+        value = float(value)
         self._hist.append(value)
         return value
