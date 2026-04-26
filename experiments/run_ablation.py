@@ -19,8 +19,6 @@ from experiments.common import (
     topic_diversity,
     topic_sparsity,
     mean_nearest_hellinger,
-)
-from experiments.paper_utils import (
     parse_df_arg,
     build_regularizers,
     fit_topic_model,

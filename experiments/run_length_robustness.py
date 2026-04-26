@@ -9,6 +9,7 @@ import nltk
 from sklearn.feature_extraction.text import TfidfTransformer
 
 from cartm import AttentiveTopicModel, ContextTopicModel
+from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
 from experiments.common import (
     prepare_data,
     infer_doc_topics_aartm,
@@ -16,9 +17,6 @@ from experiments.common import (
     classification_scores,
     fit_lda,
     fit_nmf,
-)
-from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
-from experiments.paper_utils import (
     parse_df_arg,
     build_regularizers,
     fit_topic_model,

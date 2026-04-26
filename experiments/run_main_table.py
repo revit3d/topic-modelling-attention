@@ -22,8 +22,10 @@ from experiments.common import (
     aartm_phi_pwt,
     cartm_phi_pwt,
     normalize_cols,
+    parse_df_arg,
+    build_regularizers,
+    fit_topic_model,
 )
-from experiments.paper_utils import parse_df_arg, build_regularizers, fit_topic_model
 from experiments.topic_eval import (
     phi_to_topic_words,
     save_topic_words_list,
@@ -50,7 +52,7 @@ class ModelSpec:
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="20ng", choices=["20ng", "ag_news", "dbpedia14"])
-    parser.add_argument("--out_dir", type=str, default="results/main_table_v2")
+    parser.add_argument("--out_dir", type=str, default="results/main_table")
     parser.add_argument("--models", type=str, default="aartm,aartm_no_nwt,cartm,lda,nmf,bertopic,ctm")
     parser.add_argument("--n_topics", type=int, default=50)
     parser.add_argument("--ctx_len", type=int, default=8)

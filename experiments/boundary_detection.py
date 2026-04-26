@@ -16,8 +16,6 @@ from experiments.common import (
     fit_lda,
     fit_nmf,
     doc_spans,
-)
-from experiments.paper_utils import (
     parse_df_arg,
     build_regularizers,
     fit_topic_model,

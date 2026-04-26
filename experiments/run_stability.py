@@ -9,9 +9,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
 
-from experiments.common import prepare_data, aggregate_results
-from experiments.paper_utils import parse_df_arg
-from experiments.run_main_table_v2 import parse_csv_list, build_specs, parse_args as parse_main_args
+from experiments.common import prepare_data, aggregate_results, parse_df_arg
+from experiments.run_main_table import parse_csv_list, build_specs, parse_args as parse_main_args
 
 
 def matched_topic_jaccard(
