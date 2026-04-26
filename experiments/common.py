@@ -17,15 +17,12 @@ from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score
 
+from datasets import load_dataset as hf_load_dataset
+
 from cartm import AttentiveTopicModel, ContextTopicModel
 from cartm.core import EPSILON, norm, calc_attn
-from cartm.preprocessing import CorpusLoader, build_bow
+from cartm.preprocessing import CorpusLoader, BatchedCorpusLoader, build_bow
 from cartm.regularization import DecorrelationRegularization
-
-try:
-    from datasets import load_dataset as hf_load_dataset
-except ImportError:
-    hf_load_dataset = None
 
 
 @dataclass
@@ -168,6 +165,17 @@ def prepare_data(
     train_tfidf = tfidf.fit_transform(train_bow)
     test_tfidf = tfidf.transform(test_bow)
 
+    print("=== Prepared data summary ===")
+    print(f"Dataset name: {dataset_name}")
+    print(f"Train docs: {len(train_texts)}")
+    print(f"Test docs: {len(test_texts)}")
+    print(f"Train docs filtered: {len(train_texts_filtered)}")
+    print(f"Test docs filtered: {len(test_texts_filtered)}")
+    print(f"Classes: {np.unique(np.concatenate([y_train, y_test]))}")
+    print(f"Vocabulary: {vocab_size}")
+    print(f"Num tokens train: {len(train_tokens)}")
+    print(f"Num tokens test: {len(test_tokens)}")
+
     return PreparedData(
         dataset_name=dataset_name,
         train_texts=train_texts,
@@ -219,38 +227,50 @@ def normalize_cols(x: np.ndarray) -> np.ndarray:
 
 def infer_doc_topics_aartm(
     model: AttentiveTopicModel,
-    tokens: jax.Array,
-    bounds: jax.Array,
+    batches: BatchedCorpusLoader,
     *,
     num_attn_passes: int = 1,
 ) -> np.ndarray:
-    p_it = norm(model.phi[tokens], axis=1)
-    for _ in range(num_attn_passes):
-        theta = calc_attn(
-            matrix=p_it,
-            ctx_bounds=bounds,
-            ctx_weights=model.context_weights,
-        )
-        p_it = norm(p_it * theta / (model.n_t + EPSILON), axis=1)
-    return aggregate_doc_topics(np.asarray(jax.device_get(p_it)), bounds)
+    p_it = []
+    bounds = []
+    for batch_tokens, batch_bounds in batches:
+        p_it_batch = norm(model.phi[batch_tokens], axis=1)
+        for _ in range(num_attn_passes):
+            theta_batch = calc_attn(
+                matrix=p_it_batch,
+                ctx_bounds=batch_bounds,
+                ctx_weights=model.context_weights,
+            )
+            p_it_batch = norm(p_it_batch * theta_batch / (model.n_t + EPSILON), axis=1)
+        p_it.append(p_it_batch)
+        bounds.append(batch_bounds)
+    p_it = np.concatenate(p_it)
+    bounds = np.concatenate(bounds)
+    return aggregate_doc_topics(p_it, bounds)
 
 
 def infer_doc_topics_cartm(
     model: ContextTopicModel,
-    tokens: jax.Array,
-    bounds: jax.Array,
+    batches: BatchedCorpusLoader,
     *,
     num_attn_passes: int = 1,
 ) -> np.ndarray:
-    p_it = norm(model.phi[tokens] * model.n_t, axis=1)
-    for _ in range(num_attn_passes):
-        theta = calc_attn(
-            matrix=p_it,
-            ctx_bounds=bounds,
-            ctx_weights=model.context_weights,
-        )
-        p_it = norm(p_it * theta / (model.n_t + EPSILON), axis=1)
-    return aggregate_doc_topics(np.asarray(jax.device_get(p_it)), bounds)
+    p_it = []
+    bounds = []
+    for batch_tokens, batch_bounds in batches:
+        p_it_batch = norm(model.phi[batch_tokens] * model.n_t, axis=1)
+        for _ in range(num_attn_passes):
+            theta_batch = calc_attn(
+                matrix=p_it_batch,
+                ctx_bounds=batch_bounds,
+                ctx_weights=model.context_weights,
+            )
+            p_it_batch = norm(p_it_batch * theta_batch / (model.n_t + EPSILON), axis=1)
+        p_it.append(p_it_batch)
+        bounds.append(batch_bounds)
+    p_it = np.concatenate(p_it)
+    bounds = np.concatenate(bounds)
+    return aggregate_doc_topics(p_it, bounds)
 
 
 def aartm_phi_pwt(model: AttentiveTopicModel, train_tokens: jax.Array) -> np.ndarray:
@@ -389,7 +409,7 @@ def fit_aartm(
     )
 
     if batch_size is not None and batch_size > 0:
-        batches = DocumentBatchedCorpusLoader(
+        batches = BatchedCorpusLoader(
             data.train_tokens,
             data.train_bounds,
             batch_size=batch_size,
@@ -449,7 +469,7 @@ def fit_cartm(
 
     t0 = perf_counter()
     if batch_size is not None and batch_size > 0:
-        batches = DocumentBatchedCorpusLoader(
+        batches = BatchedCorpusLoader(
             data.train_tokens,
             data.train_bounds,
             batch_size=batch_size,
@@ -520,12 +540,21 @@ def evaluate_aartm(
     model: AttentiveTopicModel,
     data: PreparedData,
     *,
+    batch_size: int,
     num_attn_passes: int,
     seed: int,
+    **kwargs,
 ) -> dict[str, float]:
     phi_wt = aartm_phi_pwt(model, data.train_tokens)
-    X_train = infer_doc_topics_aartm(model, data.train_tokens, data.train_bounds, num_attn_passes=num_attn_passes)
-    X_test = infer_doc_topics_aartm(model, data.test_tokens, data.test_bounds, num_attn_passes=num_attn_passes)
+
+    batches_train = BatchedCorpusLoader(
+        data.train_tokens, data.train_bounds, batch_size=batch_size
+    )
+    X_train = infer_doc_topics_aartm(model, batches_train, num_attn_passes=num_attn_passes)
+    batches_test = BatchedCorpusLoader(
+        data.test_tokens, data.test_bounds, batch_size=batch_size
+    )
+    X_test = infer_doc_topics_aartm(model, batches_test, num_attn_passes=num_attn_passes)
 
     metrics = {
         "npmi_10": npmi_score(phi_wt, data.train_bow, top_k=10),
@@ -541,12 +570,20 @@ def evaluate_cartm(
     model: ContextTopicModel,
     data: PreparedData,
     *,
+    batch_size: int,
     num_attn_passes: int,
     seed: int,
+    **kwargs,
 ) -> dict[str, float]:
     phi_wt = cartm_phi_pwt(model)
-    X_train = infer_doc_topics_cartm(model, data.train_tokens, data.train_bounds, num_attn_passes=num_attn_passes)
-    X_test = infer_doc_topics_cartm(model, data.test_tokens, data.test_bounds, num_attn_passes=num_attn_passes)
+    batches_train = BatchedCorpusLoader(
+        data.train_tokens, data.train_bounds, batch_size=batch_size
+    )
+    X_train = infer_doc_topics_cartm(model, batches_train, num_attn_passes=num_attn_passes)
+    batches_test = BatchedCorpusLoader(
+        data.test_tokens, data.test_bounds, batch_size=batch_size
+    )
+    X_test = infer_doc_topics_cartm(model, batches_test, num_attn_passes=num_attn_passes)
 
     metrics = {
         "npmi_10": npmi_score(phi_wt, data.train_bow, top_k=10),
@@ -702,7 +739,7 @@ def fit_topic_model(
     t0 = perf_counter()
 
     if batch_size is not None and batch_size > 0:
-        batches = DocumentBatchedCorpusLoader(tokens, bounds, batch_size=batch_size)
+        batches = BatchedCorpusLoader(tokens, bounds, batch_size=batch_size)
         model.fit(
             data=batches,
             ctx_bounds=None,

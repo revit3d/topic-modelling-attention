@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Any
+from functools import partial
 
 import nltk
 import numpy as np
@@ -17,8 +18,8 @@ from experiments.common import (
     aggregate_results,
     fit_lda,
     fit_nmf,
-    infer_doc_topics_aartm,
-    infer_doc_topics_cartm,
+    evaluate_aartm,
+    evaluate_cartm,
     aartm_phi_pwt,
     cartm_phi_pwt,
     normalize_cols,
@@ -97,64 +98,6 @@ def fit_local_model(model_cls, data, args, seed):
     return model, elapsed, {}
 
 
-def evaluate_aartm_like(model, data, _, seed):
-    phi_wt = aartm_phi_pwt(model, data.train_tokens)
-    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
-
-    X_train = infer_doc_topics_aartm(
-        model,
-        data.train_tokens,
-        data.train_bounds,
-        num_attn_passes=args.num_attn_passes,
-    )
-    X_test = infer_doc_topics_aartm(
-        model,
-        data.test_tokens,
-        data.test_bounds,
-        num_attn_passes=args.num_attn_passes,
-    )
-
-    return evaluate_topic_words_and_doc_topics(
-        topic_words=topic_words,
-        X_train=X_train,
-        X_test=X_test,
-        y_train=data.y_train,
-        y_test=data.y_test,
-        train_bow=data.train_bow,
-        vocab=data.vocab,
-        seed=seed,
-    )
-
-
-def evaluate_cartm_like(model, data, _, seed):
-    phi_wt = cartm_phi_pwt(model)
-    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
-
-    X_train = infer_doc_topics_cartm(
-        model,
-        data.train_tokens,
-        data.train_bounds,
-        num_attn_passes=args.num_attn_passes,
-    )
-    X_test = infer_doc_topics_cartm(
-        model,
-        data.test_tokens,
-        data.test_bounds,
-        num_attn_passes=args.num_attn_passes,
-    )
-
-    return evaluate_topic_words_and_doc_topics(
-        topic_words=topic_words,
-        X_train=X_train,
-        X_test=X_test,
-        y_train=data.y_train,
-        y_test=data.y_test,
-        train_bow=data.train_bow,
-        vocab=data.vocab,
-        seed=seed,
-    )
-
-
 def aartm_topic_words(model, data, _, top_k):
     phi_wt = aartm_phi_pwt(model, data.train_tokens)
     return phi_to_topic_words(phi_wt, data.id2word, top_k=top_k)
@@ -185,7 +128,7 @@ def fit_nmf_spec(data, seed):
     return model, elapsed, {}
 
 
-def evaluate_lda_spec(model, data, _, seed):
+def evaluate_lda_spec(model, data, cache, seed):
     phi_wt = normalize_cols(model.components_.T)
     topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
 
@@ -206,7 +149,7 @@ def evaluate_lda_spec(model, data, _, seed):
     )
 
 
-def evaluate_nmf_spec(model, data, _, seed):
+def evaluate_nmf_spec(model, data, cache, seed):
     phi_wt = normalize_cols(model.components_.T)
     topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
 
@@ -298,24 +241,24 @@ def ctm_words_spec(model, data, cache, top_k):
     return ctm_topic_words(model, top_k=top_k)
 
 
-def build_specs():
+def build_specs(args):
     return {
         "aartm": ModelSpec(
             name="AttentiveTopicModel",
             fit_fn=lambda data, seed: fit_local_model(AttentiveTopicModel, data, args, seed),
-            eval_fn=evaluate_aartm_like,
+            eval_fn=partial(evaluate_aartm, batch_size=args.batch_size, num_attn_passes=args.num_attn_passes),
             topic_words_fn=aartm_topic_words,
         ),
         "aartm_no_nwt": ModelSpec(
             name="AttentiveTopicModelNoNWT",
             fit_fn=lambda data, seed: fit_local_model(AttentiveTopicModelNoNWT, data, args, seed),
-            eval_fn=evaluate_aartm_like,
+            eval_fn=partial(evaluate_aartm, batch_size=args.batch_size, num_attn_passes=args.num_attn_passes),
             topic_words_fn=aartm_topic_words,
         ),
         "cartm": ModelSpec(
             name="ContextTopicModel",
             fit_fn=lambda data, seed: fit_local_model(ContextTopicModel, data, args, seed),
-            eval_fn=evaluate_cartm_like,
+            eval_fn=partial(evaluate_cartm, batch_size=args.batch_size, num_attn_passes=args.num_attn_passes),
             topic_words_fn=cartm_topic_words,
         ),
         "lda": ModelSpec(
@@ -361,7 +304,7 @@ if __name__ == "__main__":
     )
 
     selected = parse_csv_list(args.models)
-    specs = build_specs()
+    specs = build_specs(args)
     seeds = [int(x) for x in parse_csv_list(args.seeds)]
 
     rows = []
@@ -378,7 +321,7 @@ if __name__ == "__main__":
                 print(f"Skipping {spec.name}: missing dependency: {e}")
                 continue
 
-            metrics = spec.eval_fn(model, data, cache, seed)
+            metrics = spec.eval_fn(model, data, cache=cache, seed=seed)
             metrics.update({
                 "dataset": args.dataset,
                 "model": spec.name,

@@ -12,13 +12,7 @@ from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
 from experiments.common import (
     prepare_data,
     aggregate_results,
-    aartm_phi_pwt,
-    infer_doc_topics_aartm,
-    classification_scores,
-    npmi_score,
-    topic_diversity,
-    topic_sparsity,
-    mean_nearest_hellinger,
+    evaluate_aartm,
     parse_df_arg,
     build_regularizers,
     fit_topic_model,
@@ -60,25 +54,6 @@ def parse_args():
     parser.add_argument("--max_df", type=str, default="0.5")
     parser.add_argument("--seeds", type=str, default="0,1,2")
     return parser.parse_args()
-
-
-def evaluate_aartm_family(model, data, *, num_attn_passes: int, seed: int):
-    phi_wt = aartm_phi_pwt(model, data.train_tokens)
-    X_train = infer_doc_topics_aartm(
-        model, data.train_tokens, data.train_bounds, num_attn_passes=num_attn_passes
-    )
-    X_test = infer_doc_topics_aartm(
-        model, data.test_tokens, data.test_bounds, num_attn_passes=num_attn_passes
-    )
-
-    metrics = {
-        "npmi_10": npmi_score(phi_wt, data.train_bow, top_k=10),
-        "topic_diversity_25": topic_diversity(phi_wt, top_k=25),
-        "topic_sparsity": topic_sparsity(phi_wt),
-        "topic_hellinger": mean_nearest_hellinger(phi_wt),
-    }
-    metrics.update(classification_scores(X_train, data.y_train, X_test, data.y_test, seed=seed))
-    return metrics
 
 
 def main():
@@ -147,10 +122,11 @@ def main():
             batch_size=args.batch_size,
         )
 
-        metrics = evaluate_aartm_family(
+        metrics = evaluate_aartm(
             model,
             data,
             num_attn_passes=num_attn_passes,
+            batch_size=args.batch_size,
             seed=seed,
         )
         metrics.update({
