@@ -54,12 +54,12 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="20ng", choices=["20ng", "ag_news", "dbpedia14"])
     parser.add_argument("--out_dir", type=str, default="results/main_table")
-    parser.add_argument("--models", type=str, default="aartm,aartm_no_nwt,cartm,lda,nmf,bertopic,ctm")
-    parser.add_argument("--n_topics", type=int, default=50)
-    parser.add_argument("--ctx_len", type=int, default=8)
-    parser.add_argument("--gamma", type=float, default=0.6)
+    parser.add_argument("--models", type=str, default="aartm,aartm_no_nwt,lda,nmf,bertopic,ctm")
+    parser.add_argument("--n_topics", type=int, default=100)
+    parser.add_argument("--ctx_len", type=int, default=100)
+    parser.add_argument("--gamma", type=float, default=0.01)
     parser.add_argument("--self_aware_context", action="store_true")
-    parser.add_argument("--num_attn_passes", type=int, default=2)
+    parser.add_argument("--num_attn_passes", type=int, default=1)
     parser.add_argument("--max_iter", type=int, default=50)
     parser.add_argument("--tol", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=10000)
@@ -76,7 +76,7 @@ def parse_csv_list(s: str) -> list[str]:
 
 
 def fit_local_model(model_cls, data, args, seed):
-    regs = build_regularizers(args.decorrelation_tau)
+    regs = build_regularizers(args.decorrelation_tau, "tw")
     model = model_cls(
         vocab_size=len(data.vocab),
         ctx_len=args.ctx_len,
@@ -108,21 +108,21 @@ def cartm_topic_words(model, data, _, top_k):
     return phi_to_topic_words(phi_wt, data.id2word, top_k=top_k)
 
 
-def fit_lda_spec(data, seed):
+def fit_lda_spec(data, seed, n_topics, max_iter):
     model, elapsed = fit_lda(
         data,
-        n_topics=args.n_topics,
-        max_iter=args.max_iter,
+        n_topics=n_topics,
+        max_iter=max_iter,
         seed=seed,
     )
     return model, elapsed, {}
 
 
-def fit_nmf_spec(data, seed):
+def fit_nmf_spec(data, seed, n_topics, max_iter):
     model, elapsed = fit_nmf(
         data,
-        n_topics=args.n_topics,
-        max_iter=args.max_iter,
+        n_topics=n_topics,
+        max_iter=max_iter,
         seed=seed,
     )
     return model, elapsed, {}
@@ -180,12 +180,12 @@ def nmf_topic_words(model, data, _, top_k):
     return phi_to_topic_words(phi_wt, data.id2word, top_k=top_k)
 
 
-def fit_bertopic_spec(data, seed):
+def fit_bertopic_spec(data, seed, n_topics, embedding_model):
     return fit_bertopic(
         data,
-        n_topics=args.n_topics,
+        n_topics=n_topics,
         seed=seed,
-        embedding_model_name=args.embedding_model,
+        embedding_model_name=embedding_model,
     )
 
 
@@ -263,19 +263,19 @@ def build_specs(args):
         ),
         "lda": ModelSpec(
             name="LDA",
-            fit_fn=fit_lda_spec,
+            fit_fn=partial(fit_lda_spec, n_topics=args.n_topics, max_iter=args.max_iter),
             eval_fn=evaluate_lda_spec,
             topic_words_fn=lda_topic_words,
         ),
         "nmf": ModelSpec(
             name="NMF",
-            fit_fn=fit_nmf_spec,
+            fit_fn=partial(fit_nmf_spec, n_topics=args.n_topics, max_iter=args.max_iter),
             eval_fn=evaluate_nmf_spec,
             topic_words_fn=nmf_topic_words,
         ),
         "bertopic": ModelSpec(
             name="BERTopic",
-            fit_fn=fit_bertopic_spec,
+            fit_fn=partial(fit_bertopic_spec, n_topics=args.n_topics, embedding_model=args.embedding_model),
             eval_fn=evaluate_bertopic_spec,
             topic_words_fn=bertopic_words_spec,
         ),

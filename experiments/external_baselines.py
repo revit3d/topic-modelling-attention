@@ -15,10 +15,6 @@ def preprocessed_docs(loader, texts: list[str]) -> list[str]:
     return [" ".join(loader.process_doc(text)) for text in texts]
 
 
-# ---------------------------
-# BERTopic
-# ---------------------------
-
 def fit_bertopic(
     data,
     *,
@@ -96,10 +92,6 @@ def bertopic_doc_topics(model, docs: list[str]) -> np.ndarray:
     return normalize_rows(np.asarray(distr, dtype=np.float32))
 
 
-# ---------------------------
-# CombinedTM / CTM
-# ---------------------------
-
 def fit_combined_tm(
     data,
     *,
@@ -112,7 +104,6 @@ def fit_combined_tm(
     from contextualized_topic_models.models.ctm import CombinedTM
     from contextualized_topic_models.utils.data_preparation import TopicModelDataPreparation
 
-    # CTM best practice: raw text for contextual branch, preprocessed for bow branch
     train_bow_text = preprocessed_docs(data.loader, data.train_texts_filtered)
     test_bow_text = preprocessed_docs(data.loader, data.test_texts_filtered)
 

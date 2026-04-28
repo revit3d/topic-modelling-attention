@@ -8,12 +8,12 @@ import numpy as np
 import nltk
 from sklearn.feature_extraction.text import TfidfTransformer
 
-from cartm import AttentiveTopicModel, ContextTopicModel
+from cartm import AttentiveTopicModel
+from cartm.preprocessing import BatchedCorpusLoader
 from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
 from experiments.common import (
     prepare_data,
     infer_doc_topics_aartm,
-    infer_doc_topics_cartm,
     classification_scores,
     fit_lda,
     fit_nmf,
@@ -39,11 +39,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="20ng", choices=["20ng", "ag_news", "dbpedia14"])
     parser.add_argument("--out_dir", type=str, default="results/length_robustness")
-    parser.add_argument("--n_topics", type=int, default=50)
-    parser.add_argument("--ctx_len", type=int, default=8)
-    parser.add_argument("--gamma", type=float, default=0.6)
+    parser.add_argument("--n_topics", type=int, default=100)
+    parser.add_argument("--ctx_len", type=int, default=10)
+    parser.add_argument("--gamma", type=float, default=0.1)
     parser.add_argument("--self_aware_context", action="store_true")
-    parser.add_argument("--num_attn_passes", type=int, default=2)
+    parser.add_argument("--num_attn_passes", type=int, default=1)
     parser.add_argument("--max_iter", type=int, default=50)
     parser.add_argument("--tol", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=10000)
@@ -78,8 +78,9 @@ def main():
     for seed in seeds:
         print(f"\n=== Seed {seed} ===")
 
-        regs = build_regularizers(args.decorrelation_tau)
+        regs = build_regularizers(args.decorrelation_tau, "tw")
 
+        print("=== Fitting AttentiveTopicModel ===")
         aartm = AttentiveTopicModel(
             vocab_size=len(data.vocab),
             ctx_len=args.ctx_len,
@@ -99,6 +100,7 @@ def main():
             batch_size=args.batch_size,
         )
 
+        print("=== Fitting AttentiveTopicModelNoNWT ===")
         aartm_no_nwt = AttentiveTopicModelNoNWT(
             vocab_size=len(data.vocab),
             ctx_len=args.ctx_len,
@@ -118,25 +120,7 @@ def main():
             batch_size=args.batch_size,
         )
 
-        cartm = ContextTopicModel(
-            vocab_size=len(data.vocab),
-            ctx_len=args.ctx_len,
-            n_topics=args.n_topics,
-            gamma=args.gamma,
-            self_aware_context=args.self_aware_context,
-            regularizers=regs,
-        )
-        fit_topic_model(
-            cartm,
-            data.train_tokens,
-            data.train_bounds,
-            num_attn_passes=args.num_attn_passes,
-            max_iter=args.max_iter,
-            tol=args.tol,
-            seed=seed,
-            batch_size=args.batch_size,
-        )
-
+        print("=== Fitting LDA ===")
         lda, _ = fit_lda(
             data,
             n_topics=args.n_topics,
@@ -144,6 +128,7 @@ def main():
             seed=seed,
         )
 
+        print("=== Fitting NMF ===")
         nmf, _ = fit_nmf(
             data,
             n_topics=args.n_topics,
@@ -165,16 +150,16 @@ def main():
                 max_tokens_per_doc=max_len,
             )
 
+            train_batches = BatchedCorpusLoader(train_tokens_t, train_bounds_t)
             X_train = infer_doc_topics_aartm(
                 aartm,
-                train_tokens_t,
-                train_bounds_t,
+                train_batches,
                 num_attn_passes=args.num_attn_passes,
             )
+            test_batches = BatchedCorpusLoader(test_tokens_t, test_bounds_t)
             X_test = infer_doc_topics_aartm(
                 aartm,
-                test_tokens_t,
-                test_bounds_t,
+                test_batches,
                 num_attn_passes=args.num_attn_passes,
             )
             metrics = classification_scores(X_train, data.y_train, X_test, data.y_test, seed=seed)
@@ -188,16 +173,16 @@ def main():
             )
             rows.append(metrics)
 
+            train_batches = BatchedCorpusLoader(train_tokens_t, train_bounds_t)
             X_train = infer_doc_topics_aartm(
                 aartm_no_nwt,
-                train_tokens_t,
-                train_bounds_t,
+                train_batches,
                 num_attn_passes=args.num_attn_passes,
             )
+            test_batches = BatchedCorpusLoader(test_tokens_t, test_bounds_t)
             X_test = infer_doc_topics_aartm(
                 aartm_no_nwt,
-                test_tokens_t,
-                test_bounds_t,
+                test_batches,
                 num_attn_passes=args.num_attn_passes,
             )
             metrics = classification_scores(X_train, data.y_train, X_test, data.y_test, seed=seed)
@@ -205,29 +190,6 @@ def main():
                 {
                     "dataset": args.dataset,
                     "model": "AttentiveTopicModelNoNWT",
-                    "seed": seed,
-                    "max_tokens_per_doc": max_len,
-                }
-            )
-            rows.append(metrics)
-
-            X_train = infer_doc_topics_cartm(
-                cartm,
-                train_tokens_t,
-                train_bounds_t,
-                num_attn_passes=args.num_attn_passes,
-            )
-            X_test = infer_doc_topics_cartm(
-                cartm,
-                test_tokens_t,
-                test_bounds_t,
-                num_attn_passes=args.num_attn_passes,
-            )
-            metrics = classification_scores(X_train, data.y_train, X_test, data.y_test, seed=seed)
-            metrics.update(
-                {
-                    "dataset": args.dataset,
-                    "model": "ContextTopicModel",
                     "seed": seed,
                     "max_tokens_per_doc": max_len,
                 }

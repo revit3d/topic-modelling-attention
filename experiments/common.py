@@ -28,10 +28,10 @@ from cartm.regularization import DecorrelationRegularization
 @dataclass
 class PreparedData:
     dataset_name: str
-    train_texts: list[str]                 # raw original
-    test_texts: list[str]                  # raw original
-    train_texts_filtered: list[str]        # aligned with y_train / train_tokens
-    test_texts_filtered: list[str]         # aligned with y_test / test_tokens
+    train_texts: list[str]
+    test_texts: list[str]
+    train_texts_filtered: list[str]
+    test_texts_filtered: list[str]
     y_train: np.ndarray
     y_test: np.ndarray
     loader: CorpusLoader
@@ -60,12 +60,6 @@ def load_text_classification_dataset(
             remove=("headers", "footers", "quotes"),
         )
         return train.data, test.data, np.asarray(train.target), np.asarray(test.target)
-
-    if hf_load_dataset is None:
-        raise ImportError(
-            "The `datasets` package is required for ag_news and dbpedia14. "
-            "Install it with `pip install datasets`."
-        )
 
     if name == "ag_news":
         ds = hf_load_dataset("ag_news")
@@ -227,7 +221,7 @@ def normalize_cols(x: np.ndarray) -> np.ndarray:
 
 def infer_doc_topics_aartm(
     model: AttentiveTopicModel,
-    batches: BatchedCorpusLoader,
+    batches: DocumentBatchedCorpusLoader,
     *,
     num_attn_passes: int = 1,
 ) -> np.ndarray:
@@ -397,7 +391,7 @@ def fit_aartm(
 ) -> tuple[AttentiveTopicModel, float]:
     regs = []
     if decorrelation_tau > 0:
-        regs.append(DecorrelationRegularization(tau=decorrelation_tau))
+        regs.append(DecorrelationRegularization(tau=decorrelation_tau, mode="tw"))
 
     model = AttentiveTopicModel(
         vocab_size=len(data.vocab),
@@ -456,7 +450,7 @@ def fit_cartm(
 ) -> tuple[ContextTopicModel, float]:
     regs = []
     if decorrelation_tau > 0:
-        regs.append(DecorrelationRegularization(tau=decorrelation_tau))
+        regs.append(DecorrelationRegularization(tau=decorrelation_tau, mode="wt"))
 
     model = ContextTopicModel(
         vocab_size=len(data.vocab),
@@ -509,6 +503,7 @@ def fit_lda(
         max_iter=max_iter,
         learning_method="batch",
         random_state=seed,
+        n_jobs=8,
         evaluate_every=-1,
     )
     t0 = perf_counter()
@@ -718,10 +713,10 @@ class DocumentBatchedCorpusLoader:
         return iter(self._batches)
 
 
-def build_regularizers(decorrelation_tau: float):
+def build_regularizers(decorrelation_tau: float, mode: str):
     regs = []
     if decorrelation_tau > 0:
-        regs.append(DecorrelationRegularization(tau=decorrelation_tau))
+        regs.append(DecorrelationRegularization(tau=decorrelation_tau, mode=mode))
     return regs if regs else None
 
 
@@ -871,9 +866,12 @@ def make_synthetic_boundary_dataset(
     tokenized_docs, y = tokenize_docs_with_vocab(texts, labels, loader)
 
     by_class = {}
+    n_passed = 0
     for toks, label in zip(tokenized_docs, y):
         if len(toks) >= per_side_tokens:
+            n_passed += 1
             by_class.setdefault(int(label), []).append(toks)
+    print(f"=== Passed documents: {n_passed} ===")
 
     classes = [c for c, docs in by_class.items() if len(docs) > 0]
     if len(classes) < 2:

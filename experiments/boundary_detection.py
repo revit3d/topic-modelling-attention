@@ -9,7 +9,7 @@ import nltk
 import scipy.sparse as sp
 from sklearn.feature_extraction.text import TfidfTransformer
 
-from cartm import AttentiveTopicModel, ContextTopicModel
+from cartm import AttentiveTopicModel
 from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
 from experiments.common import (
     prepare_data,
@@ -20,7 +20,6 @@ from experiments.common import (
     build_regularizers,
     fit_topic_model,
     infer_token_topics_aartm,
-    infer_token_topics_cartm,
     make_synthetic_boundary_dataset,
     evaluate_boundary_detection,
 )
@@ -30,11 +29,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="20ng", choices=["20ng", "ag_news", "dbpedia14"])
     parser.add_argument("--out_dir", type=str, default="results/boundary_detection")
-    parser.add_argument("--n_topics", type=int, default=50)
-    parser.add_argument("--ctx_len", type=int, default=8)
-    parser.add_argument("--gamma", type=float, default=0.6)
+    parser.add_argument("--n_topics", type=int, default=100)
+    parser.add_argument("--ctx_len", type=int, default=10)
+    parser.add_argument("--gamma", type=float, default=0.1)
     parser.add_argument("--self_aware_context", action="store_true")
-    parser.add_argument("--num_attn_passes", type=int, default=2)
+    parser.add_argument("--num_attn_passes", type=int, default=1)
     parser.add_argument("--max_iter", type=int, default=50)
     parser.add_argument("--tol", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=10000)
@@ -55,7 +54,7 @@ def normalize_rows(x: np.ndarray) -> np.ndarray:
 
 
 def fit_context_model(model_cls, data, args, seed):
-    regs = build_regularizers(args.decorrelation_tau)
+    regs = build_regularizers(args.decorrelation_tau, "tw")
     model = model_cls(
         vocab_size=len(data.vocab),
         ctx_len=args.ctx_len,
@@ -103,6 +102,7 @@ def infer_token_topics_sklearn_windows(model, docs, vocab_size, half_window, tfi
         X = make_window_bow(doc, vocab_size=vocab_size, half_window=half_window)
         if tfidf is not None:
             X = tfidf.transform(X)
+        X = X.astype(np.float64)
         theta = model.transform(X)
         theta = normalize_rows(np.asarray(theta, dtype=np.float32))
         all_theta.append(theta)
@@ -132,7 +132,6 @@ def main():
 
         aartm, _ = fit_context_model(AttentiveTopicModel, data, args, seed)
         aartm_no_nwt, _ = fit_context_model(AttentiveTopicModelNoNWT, data, args, seed)
-        cartm, _ = fit_context_model(ContextTopicModel, data, args, seed)
 
         lda, _ = fit_lda(
             data,
@@ -184,21 +183,6 @@ def main():
             window=args.boundary_window,
         )
         metrics.update({"dataset": args.dataset, "model": "AttentiveTopicModelNoNWT", "seed": seed})
-        rows.append(metrics)
-
-        token_topics = infer_token_topics_cartm(
-            cartm,
-            mix_tokens,
-            mix_bounds,
-            num_attn_passes=args.num_attn_passes,
-        )
-        metrics = evaluate_boundary_detection(
-            token_topics,
-            mix_bounds,
-            true_boundaries,
-            window=args.boundary_window,
-        )
-        metrics.update({"dataset": args.dataset, "model": "ContextTopicModel", "seed": seed})
         rows.append(metrics)
 
         docs = flat_docs_from_bounds(mix_tokens, mix_bounds)

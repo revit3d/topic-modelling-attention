@@ -4,11 +4,11 @@ import time
 import jax
 import numpy as np
 import pandas as pd
-from sklearn.datasets import fetch_20newsgroups
-from pprint import pprint
 
-from cartm import ContextTopicModel, AttentiveTopicModel
-from cartm.preprocessing import CorpusLoader, BatchedCorpusLoader
+from cartm import AttentiveTopicModel
+from model_no_N_wt import AttentiveTopicModelNoNWT
+from cartm.preprocessing import BatchedCorpusLoader
+from common import prepare_data
 
 
 def block_tree(x):
@@ -50,6 +50,7 @@ def benchmark_any_fn(
     for _ in range(warmup_runs):
         out = fn(*args, **kwargs)
         block_tree(out)
+    print("=== Warmup ok ===")
 
     # Steady-state runs
     times = []
@@ -103,10 +104,7 @@ def print_benchmark_result(res):
 
 if __name__ == "__main__":
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-    data = fetch_20newsgroups(data_home='./data/', subset='all').data
-    preprocessor = CorpusLoader()
-    tokenized_data, document_bounds = preprocessor.fit_transform(data)
-    assert preprocessor.vocabulary is not None
+    data = prepare_data("20ng")
 
     def run_model(model, data, ctx_bounds):
         model.fit(
@@ -114,7 +112,7 @@ if __name__ == "__main__":
             ctx_bounds=ctx_bounds,
             max_iter=50,
             verbose=0,
-            seed=42,
+            seed=np.random.randint(0, 1000),
         )
 
     def run_model_batched(model, batches):
@@ -122,34 +120,33 @@ if __name__ == "__main__":
             data=batches,
             max_iter=50,
             verbose=0,
-            seed=42,
+            seed=np.random.randint(0, 1000),
         )
 
-    exp_matrix = [100, 50, 25, 10]
     benchmark_results = []
-    for n_topics in exp_matrix:
-        for ctx_len in exp_matrix:
-            for batch_size in [10_000, 100_000]:
-                for model_type in [ContextTopicModel, AttentiveTopicModel]:
+    for n_topics in [100, 10]:
+        for ctx_len in [1000, 100, 10]:
+            for batch_size in [10_000]:
+                for model_type in [AttentiveTopicModelNoNWT, AttentiveTopicModel]:
                     for device in ['gpu']:
                         # prepare batches
                         loader = BatchedCorpusLoader(
-                            data=tokenized_data,
-                            doc_bounds=document_bounds,
+                            data=data.train_tokens,
+                            doc_bounds=data.train_bounds,
                             batch_size=batch_size,
                         )
 
                         # prepare model
                         model = model_type(
-                            vocab_size=len(preprocessor.vocabulary),
+                            vocab_size=len(data.vocab),
                             ctx_len=ctx_len,
                             n_topics=n_topics,
                         )
 
                         # move data to device
                         jax_device = jax.devices(device)[0]
-                        tokenized_data = jax.device_put(tokenized_data, device=jax_device)
-                        document_bounds = jax.device_put(document_bounds, device=jax_device)
+                        tokenized_data = jax.device_put(data.train_tokens, device=jax_device)
+                        document_bounds = jax.device_put(data.train_bounds, device=jax_device)
                         loader._batches = [
                             jax.device_put(batch, device=jax_device) for batch in loader._batches
                         ]
@@ -162,33 +159,14 @@ if __name__ == "__main__":
                             "batch_size": batch_size,
                         }
 
-                        try:
-                            # non-batched benchmark
-                            config["batched"] = False
-                            res = benchmark_any_fn(
-                                run_model,
-                                model,
-                                tokenized_data,
-                                document_bounds,
-                                name=f"{model_type.__name__}, non-batched, {ctx_len=}, {n_topics=}",
-                            )
-                            print_benchmark_result(res)
-                            res.update(config)
-                            benchmark_results.append(res)
-                        except jax.errors.JaxRuntimeError as e:
-                            print("Skipping non-batched training with config")
-                            pprint(config)
-                            print(f"because of an error: {e}")
-
                         # batched benchmark
-                        config["batched"] = True
                         res = benchmark_any_fn(
                             run_model_batched,
                             model,
                             loader,
-                            name=f"{model_type.__name__}, batched, {ctx_len=}, {n_topics=}",
+                            name=f"{model_type.__name__}, {ctx_len=}, {n_topics=}",
                         )
                         print_benchmark_result(res)
                         res.update(config)
                         benchmark_results.append(res)
-    pd.DataFrame(benchmark_results).to_csv('./benchmark_results.csv')
+    pd.DataFrame(benchmark_results).to_csv('./results/benchmark/summary.csv')

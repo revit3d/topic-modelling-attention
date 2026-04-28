@@ -101,7 +101,7 @@ def main():
             f"self_aware={self_aware} | passes={num_attn_passes} | tau={tau}"
         )
 
-        regs = build_regularizers(tau)
+        regs = build_regularizers(tau, "tw")
         model = model_cls(
             vocab_size=len(data.vocab),
             ctx_len=ctx_len,

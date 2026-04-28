@@ -10,7 +10,28 @@ import pandas as pd
 from scipy.optimize import linear_sum_assignment
 
 from experiments.common import prepare_data, aggregate_results, parse_df_arg
-from experiments.run_main_table import parse_csv_list, build_specs, parse_args as parse_main_args
+from experiments.run_main_table import parse_csv_list, build_specs
+
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", type=str, default="20ng", choices=["20ng", "ag_news", "dbpedia14"])
+    parser.add_argument("--out_dir", type=str, default="results/stability")
+    parser.add_argument("--models", type=str, default="aartm,aartm_no_nwt,lda,nmf,bertopic")
+    parser.add_argument("--n_topics", type=int, default=100)
+    parser.add_argument("--ctx_len", type=int, default=100)
+    parser.add_argument("--gamma", type=float, default=0.01)
+    parser.add_argument("--self_aware_context", action="store_true")
+    parser.add_argument("--num_attn_passes", type=int, default=1)
+    parser.add_argument("--max_iter", type=int, default=50)
+    parser.add_argument("--tol", type=float, default=1e-4)
+    parser.add_argument("--batch_size", type=int, default=10000)
+    parser.add_argument("--decorrelation_tau", type=float, default=0.0)
+    parser.add_argument("--min_df", type=str, default="5")
+    parser.add_argument("--max_df", type=str, default="0.5")
+    parser.add_argument("--seeds", type=str, default="0,1,2")
+    parser.add_argument("--embedding_model", type=str, default="all-MiniLM-L6-v2")
+    return parser.parse_args()
 
 
 def matched_topic_jaccard(
@@ -35,8 +56,8 @@ def matched_topic_jaccard(
 
 
 if __name__ == "__main__":
-    args = parse_main_args()
-    out_dir = Path(args.out_dir) / args.dataset / "stability"
+    args = parse_args()
+    out_dir = Path(args.out_dir) / args.dataset
     out_dir.mkdir(parents=True, exist_ok=True)
 
     nltk.download("stopwords")
@@ -49,7 +70,7 @@ if __name__ == "__main__":
         max_token_len=20,
     )
 
-    specs = build_specs()
+    specs = build_specs(args)
     selected = parse_csv_list(args.models)
     seeds = [int(x) for x in parse_csv_list(args.seeds)]
 
