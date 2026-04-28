@@ -27,8 +27,7 @@ class AttentiveTopicModel(ModelBase):
         safe_n_w = jnp.where(n_w > EPSILON, n_w, 1.0)
         coeff = n_wt / safe_n_w
 
-        phi_new = n_wt + coeff * N_wt
-        phi_new -= coeff * phi * grad_reg(phi)
+        phi_new = n_wt + coeff * N_wt - coeff * grad_reg(phi)
         phi_new = norm(phi_new, axis=1)
         return phi_new
 
