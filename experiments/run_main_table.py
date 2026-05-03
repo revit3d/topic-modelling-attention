@@ -10,7 +10,7 @@ import nltk
 import numpy as np
 import pandas as pd
 
-from cartm import AttentiveTopicModel, ContextTopicModel
+from cartm import AttentiveTopicModel
 from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
 
 from experiments.common import (
@@ -19,9 +19,7 @@ from experiments.common import (
     fit_lda,
     fit_nmf,
     evaluate_aartm,
-    evaluate_cartm,
     aartm_phi_pwt,
-    cartm_phi_pwt,
     normalize_cols,
     parse_df_arg,
     build_regularizers,
@@ -100,11 +98,6 @@ def fit_local_model(model_cls, data, args, seed):
 
 def aartm_topic_words(model, data, _, top_k):
     phi_wt = aartm_phi_pwt(model, data.train_tokens)
-    return phi_to_topic_words(phi_wt, data.id2word, top_k=top_k)
-
-
-def cartm_topic_words(model, data, _, top_k):
-    phi_wt = cartm_phi_pwt(model)
     return phi_to_topic_words(phi_wt, data.id2word, top_k=top_k)
 
 
@@ -254,12 +247,6 @@ def build_specs(args):
             fit_fn=lambda data, seed: fit_local_model(AttentiveTopicModelNoNWT, data, args, seed),
             eval_fn=partial(evaluate_aartm, batch_size=args.batch_size, num_attn_passes=args.num_attn_passes),
             topic_words_fn=aartm_topic_words,
-        ),
-        "cartm": ModelSpec(
-            name="ContextTopicModel",
-            fit_fn=lambda data, seed: fit_local_model(ContextTopicModel, data, args, seed),
-            eval_fn=partial(evaluate_cartm, batch_size=args.batch_size, num_attn_passes=args.num_attn_passes),
-            topic_words_fn=cartm_topic_words,
         ),
         "lda": ModelSpec(
             name="LDA",

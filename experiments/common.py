@@ -19,7 +19,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 from datasets import load_dataset as hf_load_dataset
 
-from cartm import AttentiveTopicModel, ContextTopicModel
+from cartm import AttentiveTopicModel
 from cartm.core import EPSILON, norm, calc_attn
 from cartm.preprocessing import CorpusLoader, BatchedCorpusLoader, build_bow
 from cartm.regularization import DecorrelationRegularization
@@ -243,37 +243,9 @@ def infer_doc_topics_aartm(
     return aggregate_doc_topics(p_it, bounds)
 
 
-def infer_doc_topics_cartm(
-    model: ContextTopicModel,
-    batches: BatchedCorpusLoader,
-    *,
-    num_attn_passes: int = 1,
-) -> np.ndarray:
-    p_it = []
-    bounds = []
-    for batch_tokens, batch_bounds in batches:
-        p_it_batch = norm(model.phi[batch_tokens] * model.n_t, axis=1)
-        for _ in range(num_attn_passes):
-            theta_batch = calc_attn(
-                matrix=p_it_batch,
-                ctx_bounds=batch_bounds,
-                ctx_weights=model.context_weights,
-            )
-            p_it_batch = norm(p_it_batch * theta_batch / (model.n_t + EPSILON), axis=1)
-        p_it.append(p_it_batch)
-        bounds.append(batch_bounds)
-    p_it = np.concatenate(p_it)
-    bounds = np.concatenate(bounds)
-    return aggregate_doc_topics(p_it, bounds)
-
-
 def aartm_phi_pwt(model: AttentiveTopicModel, train_tokens: jax.Array) -> np.ndarray:
     phi_wt, _ = model.renormalize_phi(batch=train_tokens, phi=model.phi)
     return np.asarray(jax.device_get(phi_wt))
-
-
-def cartm_phi_pwt(model: ContextTopicModel) -> np.ndarray:
-    return np.asarray(jax.device_get(model.phi))
 
 
 def top_words(phi_wt: np.ndarray, id2word: dict[int, str], top_k: int = 10) -> list[list[str]]:
@@ -434,63 +406,6 @@ def fit_aartm(
     return model, elapsed
 
 
-def fit_cartm(
-    data: PreparedData,
-    *,
-    n_topics: int,
-    ctx_len: int,
-    gamma: float,
-    self_aware_context: bool,
-    num_attn_passes: int,
-    max_iter: int,
-    tol: float,
-    seed: int,
-    batch_size: int = -1,
-    decorrelation_tau: float = 0.0,
-) -> tuple[ContextTopicModel, float]:
-    regs = []
-    if decorrelation_tau > 0:
-        regs.append(DecorrelationRegularization(tau=decorrelation_tau, mode="wt"))
-
-    model = ContextTopicModel(
-        vocab_size=len(data.vocab),
-        ctx_len=ctx_len,
-        n_topics=n_topics,
-        gamma=gamma,
-        self_aware_context=self_aware_context,
-        regularizers=regs if regs else None,
-    )
-
-    t0 = perf_counter()
-    if batch_size is not None and batch_size > 0:
-        batches = BatchedCorpusLoader(
-            data.train_tokens,
-            data.train_bounds,
-            batch_size=batch_size,
-        )
-        model.fit(
-            data=batches,
-            ctx_bounds=None,
-            num_attn_passes=num_attn_passes,
-            max_iter=max_iter,
-            tol=tol,
-            seed=seed,
-            verbose=0,
-        )
-    else:
-        model.fit(
-            data=data.train_tokens,
-            ctx_bounds=data.train_bounds,
-            num_attn_passes=num_attn_passes,
-            max_iter=max_iter,
-            tol=tol,
-            seed=seed,
-            verbose=0,
-        )
-    elapsed = perf_counter() - t0
-    return model, elapsed
-
-
 def fit_lda(
     data: PreparedData,
     *,
@@ -550,35 +465,6 @@ def evaluate_aartm(
         data.test_tokens, data.test_bounds, batch_size=batch_size
     )
     X_test = infer_doc_topics_aartm(model, batches_test, num_attn_passes=num_attn_passes)
-
-    metrics = {
-        "npmi_10": npmi_score(phi_wt, data.train_bow, top_k=10),
-        "topic_diversity_25": topic_diversity(phi_wt, top_k=25),
-        "topic_sparsity": topic_sparsity(phi_wt),
-        "topic_hellinger": mean_nearest_hellinger(phi_wt),
-    }
-    metrics.update(classification_scores(X_train, data.y_train, X_test, data.y_test, seed=seed))
-    return metrics
-
-
-def evaluate_cartm(
-    model: ContextTopicModel,
-    data: PreparedData,
-    *,
-    batch_size: int,
-    num_attn_passes: int,
-    seed: int,
-    **kwargs,
-) -> dict[str, float]:
-    phi_wt = cartm_phi_pwt(model)
-    batches_train = BatchedCorpusLoader(
-        data.train_tokens, data.train_bounds, batch_size=batch_size
-    )
-    X_train = infer_doc_topics_cartm(model, batches_train, num_attn_passes=num_attn_passes)
-    batches_test = BatchedCorpusLoader(
-        data.test_tokens, data.test_bounds, batch_size=batch_size
-    )
-    X_test = infer_doc_topics_cartm(model, batches_test, num_attn_passes=num_attn_passes)
 
     metrics = {
         "npmi_10": npmi_score(phi_wt, data.train_bow, top_k=10),
@@ -766,24 +652,6 @@ def infer_token_topics_aartm(
     num_attn_passes: int = 1,
 ) -> np.ndarray:
     p_it = norm(model.phi[tokens], axis=1)
-    for _ in range(num_attn_passes):
-        theta = calc_attn(
-            matrix=p_it,
-            ctx_bounds=bounds,
-            ctx_weights=model.context_weights,
-        )
-        p_it = norm(p_it * theta / (model.n_t + EPSILON), axis=1)
-    return np.asarray(jax.device_get(p_it))
-
-
-def infer_token_topics_cartm(
-    model: ContextTopicModel,
-    tokens: jax.Array,
-    bounds: jax.Array,
-    *,
-    num_attn_passes: int = 1,
-) -> np.ndarray:
-    p_it = norm(model.phi[tokens] * model.n_t, axis=1)
     for _ in range(num_attn_passes):
         theta = calc_attn(
             matrix=p_it,

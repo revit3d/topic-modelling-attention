@@ -44,6 +44,7 @@ python3 -m experiments.boundary_detection \
     --n_pairs 500 \
     --seeds "0,1,2"
 
+
 python3 -m experiments.run_stability \
     --dataset 20ng \
     --out_dir results/stablity/100topics \
