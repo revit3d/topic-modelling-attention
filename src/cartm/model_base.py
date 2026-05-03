@@ -190,7 +190,7 @@ class ModelBase(ABC):
 
         Args:
             batches: Iterable returning tuples (data_batch, ctx_bounds_batch), where
-                data_batch is an array of shape (I, ), containing tokenized words 
+                data_batch is an array of shape (I, ), containing tokenized words
                 of each document and ctx_bounds_batch is an array of shape (B, )
                 containing bounds for context. Words beyond the bound are ignored
                 in the context.

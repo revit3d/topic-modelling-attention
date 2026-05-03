@@ -1,7 +1,6 @@
 import pytest
 
 import jax
-import jax.numpy as jnp
 from numpy.testing import assert_allclose
 
 from cartm import ContextTopicModel
@@ -31,7 +30,6 @@ def model(config):
 
 
 def test_step(phi, n_t, data, doc_bounds, config):
-    phi_it = phi[data]
     phi_hatch_primitive = calc_phi_hatch_primitive(
         phi=phi, n_t=n_t, vocab_size=config.vocab_size, n_topics=config.n_topics
     )
@@ -83,7 +81,7 @@ def test_step(phi, n_t, data, doc_bounds, config):
     assert_allclose(phi_model, phi_primitive, rtol=1e-5, atol=1e-6)
 
 
-def test_batched_step(model, phi, n_t, data, doc_bounds, config):
+def test_batched_step(model, data, doc_bounds, config):
     batches = BatchedCorpusLoader(data=data, doc_bounds=doc_bounds, batch_size=10)
     grad_reg = jax.grad(lambda _: 0.0)
     ctx_weights = get_context_weights_1d(

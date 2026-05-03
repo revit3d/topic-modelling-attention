@@ -1,6 +1,5 @@
 import numpy as np
 import scipy.sparse as sp
-import jax
 import jax.numpy as jnp
 from jax import Array
 
