@@ -27,8 +27,8 @@ class SparsityMetric(Metric):
         phi: Array,
         theta: Array,
     ):
-        self._num_zeros += jnp.sum(jnp.abs(phi) < self.eps).item()
-        self._num_elems += phi.shape[0] * phi.shape[1]
+        self._num_zeros = jnp.sum(jnp.abs(phi) < self.eps).item()
+        self._num_elems = phi.shape[0] * phi.shape[1]
 
     def _flush(self) -> float:
         return self._num_zeros / self._num_elems

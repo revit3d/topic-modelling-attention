@@ -116,12 +116,12 @@ class AttentiveTopicModel(ModelBase):
             n_wt_total += n_wt_step
             N_wt_total += N_wt_step
 
+            self._calc_metrics_batch(batch=batch, phi=phi_new, theta=theta)
+
             batch_counter += 1
             if batch_counter == num_batches_before_update:
                 flush()
                 reset_totals()
-
-            self._calc_metrics_batch(batch=batch, phi=phi_new, theta=theta)
 
         if batch_counter > 0:
             flush()
