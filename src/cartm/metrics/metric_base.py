@@ -32,34 +32,26 @@ class Metric(ABC):
         self._hist = []
 
     @abstractmethod
-    def _call_impl(
+    def partial_update(
         self,
-        phi_it: Array,
-        phi_wt: Array,
+        *,
+        batch: Array,
+        phi: Array,
         theta: Array,
-        **kwargs,
-    ) -> float:
-        pass
-
-    def __call__(
-        self,
-        phi_it: Array,
-        phi_wt: Array,
-        theta: Array,
-        **kwargs,
-    ) -> float:
+    ):
         """
         Args:
-            phi_it: matrix of shape (I, T), representing distribution p(w_i|t).
-            phi_wt: matrix of shape (W, T), representing distribution p(w|t).
+            batch: matrix of shape (I,), containing tokens.
+            phi: matrix of shape (W, T), representing distribution p(w|t).
             theta: matrix of shape (I, T), representing distribution p(t|C_i).
         """
-        value = self._call_impl(
-            phi_it=phi_it,
-            phi_wt=phi_wt,
-            theta=theta,
-            **kwargs,
-        )
-        value = float(value)
+        pass
+
+    @abstractmethod
+    def _flush(self) -> float:
+        pass
+
+    def flush(self) -> float:
+        value = self._flush()
         self._hist.append(value)
         return value

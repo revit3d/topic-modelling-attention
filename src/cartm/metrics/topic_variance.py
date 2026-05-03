@@ -43,20 +43,34 @@ class TopicVarianceMetric(Metric):
         else:
             raise NotImplementedError()
 
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array = None, **kwargs) -> float:
+        self._last_phi = None
+
+    def partial_update(
+        self,
+        *,
+        batch: Array,
+        phi: Array,
+        theta: Array,
+    ):
+        self._last_phi = phi
+
+    def _flush(self) -> float:
+        if self._last_phi is None:
+            return 0.0
+
         # topic vectors can have different nature depending on the chosen metric
         if self.distance_metric == "jaccard":
             top_words_per_topic = jnp.argpartition(
-                phi_wt, -self.top_k, axis=0
+                self._last_phi, -self.top_k, axis=0
             )  # (W, T)
             top_words_per_topic = top_words_per_topic[-self.top_k:].T  # (T, W_k)
-            W, T = phi_wt.shape
+            W, T = self._last_phi.shape
             topic_vectors = jnp.zeros((T, W), dtype=bool)  # (T, W)
             topic_vectors = topic_vectors.at[
                 jnp.arange(T)[:, None], top_words_per_topic
             ].set(True)
         else:
-            topic_vectors = phi_wt.T  # (T, W)
+            topic_vectors = self._last_phi.T  # (T, W)
 
         dist_matrix = self._compute_distance_matrix(
             topic_vectors, self._dist_func

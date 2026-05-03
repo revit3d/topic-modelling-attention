@@ -29,9 +29,23 @@ class NPMICoherenceMetric(Metric):
         self.n_docs = self.bow.shape[0]
         self.top_k = top_k
 
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs) -> float:
-        top_words = jnp.argpartition(phi_wt, -self.top_k, axis=0)[-self.top_k:]  # (k, T)
-        top_words = np.asarray(jax.device_get(top_words.T))  # (T, k)
+        self._last_phi = None
+
+    def partial_update(
+        self,
+        *,
+        batch: Array,
+        phi: Array,
+        theta: Array,
+    ):
+        self._last_phi = phi
+
+    def _flush(self) -> float:
+        if self._last_phi is None:
+            return -1.0
+
+        top_words = jnp.argpartition(self._last_phi, -self.top_k, axis=0)[-self.top_k:]  # (k, T)
+        top_words = np.asarray(top_words.T)  # (T, k)
 
         selected, inv = np.unique(top_words, return_inverse=True)
         inv = inv.reshape(top_words.shape)
@@ -56,5 +70,7 @@ class NPMICoherenceMetric(Metric):
         for topic_idx in inv:
             topic_npmi = npmi[np.ix_(topic_idx, topic_idx)]
             topic_scores.append(topic_npmi[triu].mean())
+
+        self._last_phi = None
 
         return np.mean(topic_scores).item()

@@ -1,6 +1,3 @@
-from functools import partial
-
-import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -18,16 +15,27 @@ class PerplexityMetric(Metric):
             tag = self.__class__.__name__
         super().__init__(tag=tag)
 
-    @partial(jax.jit, static_argnums=0)
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs) -> float:
-        num_words = phi_it.shape[0]
+        self._num_words = 0
+        self._likelihood = 0.0
+
+    def partial_update(
+        self,
+        *,
+        batch: Array,
+        phi: Array,
+        theta: Array,
+    ):
+        self._num_words += len(batch)
 
         # p(w_i|C_i) = p(w_i|t)p(t|C_i) = \sum_t (phi_it * theta_it)
-        p_wi = jnp.sum(theta * phi_it, axis=1)
+        p_wi = jnp.sum(theta * phi[batch], axis=1)
 
         # L = \sum_d \sum_w n_dw \log p(w|d) = \sum_i 1 * \log p(w_i|C_i)
-        likelihood = jnp.sum(jnp.log(p_wi + EPSILON))
+        self._likelihood += jnp.sum(jnp.log(p_wi + EPSILON))
 
+    def _flush(self) -> float:
         # perplexity = exp{-L / I}
-        perplexity = jnp.exp(-likelihood / num_words)
+        perplexity = jnp.exp(-self._likelihood / self._num_words).item()
+        self._num_words = 0
+        self._likelihood = 0.0
         return perplexity

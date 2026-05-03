@@ -1,6 +1,3 @@
-from functools import partial
-
-import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -20,8 +17,18 @@ class SparsityMetric(Metric):
 
         self.eps = eps
 
-    @partial(jax.jit, static_argnums=0)
-    def _call_impl(self, phi_it: Array, phi_wt: Array, theta: Array, **kwargs) -> float:
-        num_zeros = jnp.sum(jnp.abs(phi_wt) < self.eps)
-        num_elems = phi_wt.shape[0] * phi_wt.shape[1]
-        return num_zeros / num_elems
+        self._num_zeros = 0
+        self._num_elems = 0
+
+    def partial_update(
+        self,
+        *,
+        batch: Array,
+        phi: Array,
+        theta: Array,
+    ):
+        self._num_zeros += jnp.sum(jnp.abs(phi) < self.eps).item()
+        self._num_elems += phi.shape[0] * phi.shape[1]
+
+    def _flush(self) -> float:
+        return self._num_zeros / self._num_elems
