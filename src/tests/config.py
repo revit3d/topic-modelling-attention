@@ -9,4 +9,5 @@ class TestConfig:
     n_topics = 12
     ctx_len = 5
     gamma = 0.6
+    num_attn_passes = 1
     seed = 42

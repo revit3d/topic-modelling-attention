@@ -163,16 +163,16 @@ def calc_coherence_primitive(
                 p_w1 = word_counts[w1] / n_documents
                 p_w2 = word_counts[w2] / n_documents
                 if pair_counts[w1][w2] == 0:
-                    npmi = -1.0
+                    npmi = np.float64(-1.0)
                 else:
                     pmi = np.log(p_w1_w2 / (p_w1 * p_w2) + EPSILON)
                     npmi = pmi / -(np.log(p_w1_w2) + EPSILON)
-                topic_coherence += npmi
+                topic_coherence += npmi.item()
                 n_pairs += 1
 
         assert n_pairs == top_k * (top_k - 1) // 2
         topic_coherence = topic_coherence / n_pairs
-        coherence.append(topic_coherence.item())
+        coherence.append(topic_coherence)
 
     return np.mean(coherence)
 
@@ -186,23 +186,29 @@ def theta(config):
 
 
 def test_perplexity(data, phi, theta, config):
-    phi_it = phi[data]
     perplexity_primitive = calc_perplexity_primitive(
-        phi_it=phi_it,
+        phi_it=phi[data],
         theta=theta,
         n_topics=config.n_topics,
         n_words=config.n_words,
     )
-    perplexity_metric = mtc.PerplexityMetric()(
-        phi_it=phi_it,
-        phi_wt=None,
-        theta=theta,
+    perplexity_metric = mtc.PerplexityMetric()
+    perplexity_metric.partial_update(
+        batch=data[:50],
+        phi=phi,
+        theta=theta[:50],
     )
-    assert_allclose(perplexity_metric, perplexity_primitive, rtol=1e-5, atol=1e-6)
+    perplexity_metric.partial_update(
+        batch=data[50:],
+        phi=phi,
+        theta=theta[50:],
+    )
+    perplexity = perplexity_metric.flush()
+    assert_allclose(perplexity, perplexity_primitive, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("zero_threshold", [0.1, 0.3, 0.6, 0.8])
-def test_sparsity(zero_threshold, phi, config):
+def test_sparsity(zero_threshold, data, phi, theta, config):
     thresh_mask = phi < zero_threshold
     phi_wt_thresh = phi.at[thresh_mask].set(0.0)
     sparsity_primitive = calc_sparsity_primitive(
@@ -210,16 +216,18 @@ def test_sparsity(zero_threshold, phi, config):
         vocab_size=config.vocab_size,
         n_topics=config.n_topics,
     )
-    sparsity_metric = mtc.SparsityMetric()(
-        phi_it=None,
-        phi_wt=phi_wt_thresh,
-        theta=None,
+    sparsity_metric = mtc.SparsityMetric()
+    sparsity_metric.partial_update(
+        batch=data,
+        phi=phi_wt_thresh,
+        theta=theta,
     )
-    assert_allclose(sparsity_metric, sparsity_primitive, rtol=1e-5, atol=1e-6)
+    sparsity = sparsity_metric.flush()
+    assert_allclose(sparsity, sparsity_primitive, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("distance_metric", ["jaccard", "cosine", "hellinger"])
-def test_topic_variance(distance_metric, phi, config):
+def test_topic_variance(distance_metric, data, phi, theta, config):
     top_k = 8
     topic_variance_primitive = calc_topic_variance_primitive(
         phi_wt=phi,
@@ -231,11 +239,17 @@ def test_topic_variance(distance_metric, phi, config):
     topic_variance_metric = mtc.TopicVarianceMetric(
         top_k=top_k if distance_metric == "jaccard" else None,
         distance_metric=distance_metric,
-    )(phi_it=None, phi_wt=phi, theta=None)
-    assert_allclose(topic_variance_metric, topic_variance_primitive, rtol=1e-5, atol=1e-6)
+    )
+    topic_variance_metric.partial_update(
+        batch=data,
+        phi=phi,
+        theta=theta,
+    )
+    topic_variance = topic_variance_metric.flush()
+    assert_allclose(topic_variance, topic_variance_primitive, rtol=1e-5, atol=1e-6)
 
 
-def test_coherence(data, doc_bounds, phi, config):
+def test_coherence(data, doc_bounds, phi, theta, config):
     top_k = 8
     bow = build_bow(
         tokenized_data=data,
@@ -250,9 +264,11 @@ def test_coherence(data, doc_bounds, phi, config):
         n_topics=config.n_topics,
         top_k=top_k,
     )
-    coherence_metric = mtc.NPMICoherenceMetric(bow=bow, top_k=top_k)(
-        phi_it=None,
-        phi_wt=phi,
-        theta=None,
+    coherence_metric = mtc.NPMICoherenceMetric(bow=bow, top_k=top_k)
+    coherence_metric.partial_update(
+        batch=data,
+        phi=phi,
+        theta=theta,
     )
-    assert_allclose(coherence_metric, coherence_primitive, rtol=1e-5, atol=1e-6)
+    coherence = coherence_metric.flush()
+    assert_allclose(coherence, coherence_primitive, rtol=1e-5, atol=1e-6)

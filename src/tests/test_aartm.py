@@ -22,6 +22,16 @@ def phi(config):
     return phi.T
 
 
+@pytest.fixture
+def model(config):
+    return AttentiveTopicModel(
+        vocab_size=config.vocab_size,
+        ctx_len=config.ctx_len,
+        n_topics=config.n_topics,
+        gamma=config.gamma,
+    )
+
+
 def test_step(phi, n_t, data, doc_bounds, config):
     phi_hatch = phi[data]
     theta_primitive = calc_theta_primitive(
@@ -68,14 +78,18 @@ def test_step(phi, n_t, data, doc_bounds, config):
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
-    phi_it_model, phi_model, theta_model, n_t_model, n_wt_model, N_wt_model = AttentiveTopicModel._step(  # noqa
+    theta_model, n_t_model, n_wt_model, N_wt_model = AttentiveTopicModel._step(  # noqa
         batch=data,
         ctx_bounds=doc_bounds,
         phi=phi,
         n_t=n_t,
         ctx_weights=ctx_weights,
-        grad_reg=grad_reg,
-        num_attn_passes=1,
+        num_attn_passes=config.num_attn_passes,
+    )
+    # we evaluate gradient in a wrong manner, but it is zero in this test
+    grad_phi = grad_reg(phi)
+    phi_model = AttentiveTopicModel._update_phi(
+        grad_phi=grad_phi, n_wt=n_wt_model, N_wt=N_wt_model
     )
 
     assert_allclose(theta_model, theta_primitive, rtol=1e-5, atol=1e-6)
