@@ -310,3 +310,6 @@ class BatchedCorpusLoader:
 
     def __getitem__(self, idx) -> tuple[Array, Array]:
         return self._batches[idx]
+
+    def __iter__(self):
+        return iter(self._batches)

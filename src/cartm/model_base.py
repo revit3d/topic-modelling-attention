@@ -13,10 +13,10 @@ class ModelBase(ABC):
     def __init__(
         self,
         vocab_size: int,
-        ctx_len: int,
         *,
         n_topics: int = 10,
-        gamma: float = 0.6,
+        ctx_len: int = 10,
+        gamma: float = 0.1,
         self_aware_context: bool = False,
         regularizers: list[Regularization] | None = None,
         metrics: list[Metric] | None = None,
@@ -24,8 +24,8 @@ class ModelBase(ABC):
         """
         Args:
             vocab_size: corpus vocabulary size, W.
-            ctx_len: one-sided context size, C.
             n_topics: number of topics, T.
+            ctx_len: one-sided context size, C.
             gamma: parameter used for calculating weights of the word embeddings in the context.
             self_aware_context: whether to use the word itself in its context.
             regularizers: list of regularizations (see `add_regularization` method).
@@ -73,7 +73,30 @@ class ModelBase(ABC):
         ctx_weights: jax.Array,
         grad_reg: Callable,
         num_attn_passes: int,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    ) -> tuple:
+        pass
+
+    @abstractmethod
+    def _batched_step_wrapper(
+        self,
+        *,
+        batches: Iterable[tuple[jax.Array, jax.Array]],
+        ctx_weights: jax.Array,
+        grad_reg: Callable,
+        num_attn_passes: int,
+        lr: float,
+        num_batches_before_update: int,
+    ) -> tuple[jax.Array, jax.Array]:
+        pass
+
+    @abstractmethod
+    def _calc_metrics_batch(
+        self,
+        *,
+        batch: jax.Array,
+        phi: jax.Array,
+        theta: jax.Array,
+    ):
         pass
 
     def add_regularization(self, regularization: Regularization):
@@ -131,13 +154,9 @@ class ModelBase(ABC):
         )
         return jax.jit(reg_grad)
 
-    def _calc_metrics(
+    def _flush_metrics(
         self,
         *,
-        batch: jax.Array,
-        phi_it: jax.Array,
-        phi_wt: jax.Array,
-        theta: jax.Array,
         verbose: int,
     ):
         if len(self._metrics) == 0:
@@ -145,35 +164,15 @@ class ModelBase(ABC):
 
         if verbose > 1:
             print("  Metrics:")
+
         for tag, metric in self._metrics.items():
-            value = metric(
-                phi_it=phi_it,
-                phi_wt=phi_wt,
-                theta=theta,
-                batch=batch,
-            )
+            value = metric.flush()
             if verbose > 1:
                 print(f"    {tag}: {value:.04f}")
 
-    @abstractmethod
-    def _batched_step_wrapper(
-        self,
-        *,
-        batches: Iterable[tuple[jax.Array, jax.Array]],
-        phi: jax.Array,
-        n_t: jax.Array,
-        ctx_weights: jax.Array,
-        grad_reg: Callable,
-        num_attn_passes: int,
-        lr: float,
-        num_batches_before_update: int,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-        pass
-
     def fit(
         self,
-        data: jax.Array | Iterable[tuple[jax.Array, jax.Array]],
-        ctx_bounds: jax.Array = None,
+        batches: Iterable[tuple[jax.Array, jax.Array]],
         *,
         lr: float = 0.1,
         num_batches_before_update: int = -1,
@@ -184,16 +183,17 @@ class ModelBase(ABC):
         seed: int = 0,
     ):
         """
-        Fit the model with the corpus of documents. Note that is you are fitting
-        on batches, default model behavior is to accumulate statistics across all
-        batches and then update state once. If you want to update state every
+        Fit the model with the corpus of documents. Note that default model
+        behavior is to accumulate statistics across all batches and then
+        update state once per corpus pass. If you want to update state every
         n batches, see `num_batches_before_update` and `lr` parameters.
 
         Args:
-            data: array of shape (I, ), containing tokenized words of each document
-                or iterable returning tuples (data_batch, ctx_bounds_batch).
-            ctx_bounds: array of shape (B, ), containing bounds for context. Words
-                beyond the bound are ignored in the context.
+            batches: Iterable returning tuples (data_batch, ctx_bounds_batch), where
+                data_batch is an array of shape (I, ), containing tokenized words 
+                of each document and ctx_bounds_batch is an array of shape (B, )
+                containing bounds for context. Words beyond the bound are ignored
+                in the context.
             lr: coefficient for updating phi in EMA mode:
                 phi = phi_prev * (1 - lr) + phi_new * lr
             num_batches_before_update: if positive, batched algorithm updates phi
@@ -208,35 +208,26 @@ class ModelBase(ABC):
                 2 - output metric values after each iteration
             seed: random seed.
         """
-        assert num_attn_passes > 0
+        if num_attn_passes <= 0:
+            raise ValueError("num_attn_passes has to be a positive value.")
+
         self._init_state(seed=seed)
         grad_regularization = self._compose_regularizations()
 
+        n_w = jnp.zeros(self.vocab_size)
+        for batch, _ in batches:
+            n_w += jnp.bincount(batch, length=self.vocab_size)
+        self.p_w = n_w / jnp.sum(n_w)  # (W,)
+
         for it in range(max_iter):
-            if ctx_bounds is None:
-                # batched input
-                phi_it, phi_new, theta, self.n_t, batch_for_metrics = self._batched_step_wrapper(
-                    batches=data,
-                    phi=self.phi,
-                    n_t=self.n_t,
-                    ctx_weights=self.context_weights,
-                    grad_reg=grad_regularization,
-                    num_attn_passes=num_attn_passes,
-                    lr=lr,
-                    num_batches_before_update=num_batches_before_update,
-                )
-            else:
-                # non-batched input
-                phi_it, phi_new, theta, self.n_t, *_ = self._step(
-                    batch=data,
-                    ctx_bounds=ctx_bounds,
-                    phi=self.phi,
-                    n_t=self.n_t,
-                    ctx_weights=self.context_weights,
-                    grad_reg=grad_regularization,
-                    num_attn_passes=num_attn_passes,
-                )
-                batch_for_metrics = data
+            phi_new, n_t_new = self._batched_step_wrapper(
+                batches=batches,
+                ctx_weights=self.context_weights,
+                grad_reg=grad_regularization,
+                num_attn_passes=num_attn_passes,
+                lr=lr,
+                num_batches_before_update=num_batches_before_update,
+            )
 
             diff_norm = jnp.linalg.norm(phi_new - self.phi)
             if verbose > 0:
@@ -244,14 +235,9 @@ class ModelBase(ABC):
                     f"Iteration [{it + 1}/{max_iter}], phi update diff norm: {diff_norm:.04f}"
                 )
 
-            self._calc_metrics(
-                batch=batch_for_metrics,
-                phi_it=phi_it,
-                phi_wt=phi_new,
-                theta=theta,
-                verbose=verbose,
-            )
+            self._flush_metrics(verbose=verbose)
 
             self.phi = phi_new
+            self.n_t = n_t_new
             if diff_norm < tol:
                 break

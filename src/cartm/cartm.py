@@ -15,35 +15,28 @@ class ContextTopicModel(ModelBase):
     """
 
     @staticmethod
-    @jax.jit(static_argnames=("grad_reg"))
+    @jax.jit
     def _update_phi(
         phi: jax.Array,
-        p_it: jax.Array,
-        batch: jax.Array,
-        grad_reg: Callable,
+        grad_phi: jax.Array,
+        n_wt: jax.Array,
     ) -> jax.Array:
         """Update phi_wt = p(w|t) matrix"""
-        phi_new = jax.ops.segment_sum(p_it, batch, phi.shape[0])
-        phi_new -= phi * grad_reg(phi)  # (W, T)
+        phi_new = n_wt + phi * grad_phi  # (W, T)
         phi_new = norm(phi_new, axis=0)  # (W, T)
         return phi_new
 
     @staticmethod
-    @jax.jit(static_argnames=("grad_reg", "num_attn_passes"))
+    @jax.jit(static_argnames=("num_attn_passes"))
     def _step(
         batch: jax.Array,
         ctx_bounds: jax.Array,
         phi: jax.Array,
         n_t: jax.Array,
         ctx_weights: jax.Array,
-        grad_reg: Callable,
         num_attn_passes: int,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-        # phi_it = p(C_i|t)
-        phi_it = phi[batch]
-
-        # calculate phi' (words -> topics) matrix (phi with old p_{ti})
-        p_it = norm(phi_it * n_t, axis=1)  # (I, T)
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
+        p_it = norm(phi[batch] * n_t, axis=1)  # (I, T)
 
         for _ in range(num_attn_passes):
             # calculate theta_it = p(t|C_i) matrix
@@ -53,85 +46,71 @@ class ContextTopicModel(ModelBase):
                 ctx_weights=ctx_weights,
             )  # (I, T)
 
-            # update p_{ti} - topic probability distribution for i-th context
             p_it = norm(p_it * theta / (n_t + EPSILON), axis=1)  # (I, T)
 
-        # update n_{t} - topic probability distribution
-        n_t_new = jnp.sum(p_it, axis=0)  # (T, )
+        n_t_new = jnp.sum(p_it, axis=0)  # (T,)
+        n_wt = jax.ops.segment_sum(p_it, batch, phi.shape[0])  # (W, T)
 
-        phi_new = ContextTopicModel._update_phi(
-            phi=phi, p_it=p_it, batch=batch, grad_reg=grad_reg
-        )
-
-        return phi_it, phi_new, theta, n_t_new, p_it
+        return theta, n_t_new, n_wt
 
     def _batched_step_wrapper(
         self,
         *,
         batches: Iterable[tuple[jax.Array, jax.Array]],
-        phi: jax.Array,
-        n_t: jax.Array,
         ctx_weights: jax.Array,
         grad_reg: Callable,
         num_attn_passes: int,
         lr: float,
         num_batches_before_update: int,
-    ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
-        phi_it = []
-        theta = []
-        batch_all = []
-        p_it = []
-        phi_new = phi.copy()
-        n_t_new = n_t.copy()
-        n_t_total = jnp.zeros_like(n_t)
+    ) -> tuple[jax.Array, jax.Array]:
+        if num_batches_before_update <= 0:
+            lr = 1.0
+
+        phi_new = self.phi
+        n_t_new = self.n_t
+        n_t_total = jnp.zeros_like(self.n_t)
+        n_wt_total = jnp.zeros_like(self.phi)
         batch_counter = 0
 
-        for i, (batch, ctx_bounds_batch) in enumerate(batches):
-            phi_it_step, phi_step, theta_step, n_t_step, p_it_step = self._step(
+        def reset_totals():
+            nonlocal n_t_total, n_wt_total, batch_counter
+
+            n_t_total = jnp.zeros_like(self.n_t)
+            n_wt_total = jnp.zeros_like(self.phi)
+            batch_counter = 0
+
+        def flush():
+            nonlocal phi_new, n_t_new
+
+            grad_phi = grad_reg(phi_new)
+            phi_step = self._update_phi(
+                phi=phi_new, grad_phi=grad_phi, n_wt=n_wt_total
+            )
+            phi_new = phi_new * (1.0 - lr) + phi_step * lr
+            n_t_new = n_t_new * (1.0 - lr) + n_t_total * lr
+
+        for batch, ctx_bounds_batch in batches:
+            theta, n_t_step, n_wt_step = self._step(
                 batch=batch,
                 ctx_bounds=ctx_bounds_batch,
-                phi=phi,
-                n_t=n_t,
+                phi=phi_new,
+                n_t=n_t_new,
                 ctx_weights=ctx_weights,
-                grad_reg=grad_reg,
                 num_attn_passes=num_attn_passes,
             )
             n_t_total += n_t_step
-            phi_it.append(phi_it_step)
-            theta.append(theta_step)
-            batch_all.append(batch)
-            p_it.append(p_it_step)
+            n_wt_total += n_wt_step
 
             batch_counter += 1
-            if (
-                num_batches_before_update > 0
-                and (
-                    batch_counter == num_batches_before_update
-                    or i == len(batches) - 1
-                )
-            ):
-                batch_total = jnp.concatenate(batch_all[-batch_counter:])
-                p_it_total = jnp.concatenate(p_it[-batch_counter:])
-                phi_step = self._update_phi(
-                    phi=phi, p_it=p_it_total, batch=batch_total, grad_reg=grad_reg
-                )
-                phi_new = phi_new * (1 - lr) + phi_step * lr
-                n_t_new = n_t_new * (1 - lr) + n_t_total * lr
-                n_t_total = jnp.zeros_like(n_t)
-                batch_counter = 0
+            if batch_counter == num_batches_before_update:
+                flush()
+                reset_totals()
 
-        phi_it = jnp.concatenate(phi_it)
-        theta = jnp.concatenate(theta)
-        batch_all = jnp.concatenate(batch_all)
+            self._calc_metrics_batch(batch=batch, phi=phi_new, theta=theta)
 
-        if num_batches_before_update <= 0:
-            p_it = jnp.concatenate(p_it)
-            phi_new = self._update_phi(
-                phi=phi, p_it=p_it, batch=batch_all, grad_reg=grad_reg
-            )
-            n_t_new = n_t_total
-
-        return phi_it, phi_new, theta, n_t_new, batch_all
+        if batch_counter > 0:
+            flush()
+        return phi_new, n_t_new
 
     def _init_state(self, *, seed: int):
         key = jax.random.key(seed)
@@ -142,3 +121,20 @@ class ContextTopicModel(ModelBase):
         )
         self.phi = norm(self.phi, axis=0)
         self.n_t = jnp.ones(self.n_topics, dtype=jnp.float32)
+
+    def _calc_metrics_batch(
+        self,
+        *,
+        batch: jax.Array,
+        phi: jax.Array,
+        theta: jax.Array,
+    ):
+        if len(self._metrics) == 0:
+            return
+
+        for metric in self._metrics.values():
+            metric.partial_update(
+                batch=batch,
+                phi=phi,
+                theta=theta,
+            )
