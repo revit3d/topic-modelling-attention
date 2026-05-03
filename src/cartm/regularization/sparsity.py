@@ -1,12 +1,13 @@
 import jax
 import jax.numpy as jnp
 
+from cartm.core import EPSILON
 from cartm.regularization.regularization_base import Regularization
 
 
 class SparsityRegularization(Regularization):
     def __init__(
-        self, alpha: jax.Array, tau: float, *, tag: str = None, eps: float = 1e-12
+        self, alpha: jax.Array, tau: float, *, tag: str | None = None
     ):
         """
         Regularization that approximates the distribution p(w|t) \\
@@ -23,7 +24,6 @@ class SparsityRegularization(Regularization):
         super().__init__(tag=tag, tau=tau)
 
         self.alpha = alpha
-        self._eps = eps
 
-    def _call_impl(self, phi_wt: jax.Array) -> float:
-        return jnp.sum(self.alpha * jnp.log(phi_wt + self._eps))
+    def _call_impl(self, phi_wt: jax.Array) -> jax.Array:
+        return jnp.sum(self.alpha * jnp.log(phi_wt + EPSILON))

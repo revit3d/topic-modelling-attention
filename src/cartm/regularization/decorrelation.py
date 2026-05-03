@@ -5,7 +5,7 @@ from cartm.regularization.regularization_base import Regularization
 
 
 class DecorrelationRegularization(Regularization):
-    def __init__(self, tau: float, tag: str = None):
+    def __init__(self, tau: float, tag: str | None = None):
         """
         Regularization that decorrelates topics.
 
@@ -17,7 +17,7 @@ class DecorrelationRegularization(Regularization):
             tag = self.__class__.__name__
         super().__init__(tag=tag, tau=tau)
 
-    def _call_impl(self, phi_wt: jax.Array) -> float:
+    def _call_impl(self, phi_wt: jax.Array) -> jax.Array:
         corr_matrix = phi_wt.T @ phi_wt  # (T, T)
         # remove duplicates and diagonal terms
         corr_triu = jnp.triu(corr_matrix, k=1)

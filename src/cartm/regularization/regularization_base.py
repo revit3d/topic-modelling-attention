@@ -31,10 +31,10 @@ class Regularization(ABC):
         return self._tau
 
     @abstractmethod
-    def _call_impl(self, phi_wt: Array) -> float:
+    def _call_impl(self, phi_wt: Array) -> Array:
         pass
 
-    def __call__(self, phi_wt: Array) -> float:
+    def __call__(self, phi_wt: Array) -> Array:
         """
         Args:
             phi: matrix of shape (W, T), representing distribution p(w|t).
