@@ -26,12 +26,13 @@ def data(config: TestConfig):
 
 @pytest.fixture(scope="session")
 def doc_bounds(config: TestConfig):
-    doc_bounds = np.random.choice(
-        config.n_words - 1,
+    rng = np.random.default_rng(config.seed)
+    doc_bounds = rng.choice(
+        np.arange(1, config.n_words),
         size=config.n_documents - 1,
         replace=False,
-    ) + 1
-    doc_bounds_ohe = np.zeros(config.n_words, dtype=np.bool)
+    )
+    doc_bounds_ohe = np.zeros(config.n_words, dtype=bool)
     doc_bounds_ohe[doc_bounds] = True
     return jnp.asarray(doc_bounds_ohe)
 

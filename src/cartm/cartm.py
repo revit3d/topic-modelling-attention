@@ -31,22 +31,24 @@ class ContextTopicModel(ModelBase):
     def _step(
         batch: jax.Array,
         ctx_bounds: jax.Array,
+        token_mask: jax.Array,
         phi: jax.Array,
         n_t: jax.Array,
         ctx_weights: jax.Array,
         num_attn_passes: int,
     ) -> tuple[jax.Array, jax.Array, jax.Array]:
-        p_it = norm(phi[batch] * n_t, axis=1)  # (I, T)
+        p_it = norm(phi[batch] * n_t, axis=1) * token_mask[:, None]  # (I, T)
 
         for _ in range(num_attn_passes):
-            # calculate theta_it = p(t|C_i) matrix
             theta = calc_attn(
                 matrix=p_it,
                 ctx_bounds=ctx_bounds,
                 ctx_weights=ctx_weights,
+                token_mask=token_mask,
             )  # (I, T)
 
             p_it = norm(p_it * theta / (n_t + EPSILON), axis=1)  # (I, T)
+            p_it = p_it * token_mask[:, None]
 
         n_t_new = jnp.sum(p_it, axis=0)  # (T,)
         n_wt = jax.ops.segment_sum(p_it, batch, phi.shape[0])  # (W, T)
@@ -56,7 +58,7 @@ class ContextTopicModel(ModelBase):
     def _batched_step_wrapper(
         self,
         *,
-        batches: Iterable[tuple[jax.Array, jax.Array]],
+        batches: Iterable[tuple[jax.Array, jax.Array, jax.Array]],
         ctx_weights: jax.Array,
         grad_reg: Callable,
         num_attn_passes: int,
@@ -89,10 +91,11 @@ class ContextTopicModel(ModelBase):
             phi_new = phi_new * (1.0 - lr) + phi_step * lr
             n_t_new = n_t_new * (1.0 - lr) + n_t_total * lr
 
-        for batch, ctx_bounds_batch in batches:
+        for batch, ctx_bounds_batch, token_mask in batches:
             theta, n_t_step, n_wt_step = self._step(
                 batch=batch,
                 ctx_bounds=ctx_bounds_batch,
+                token_mask=token_mask,
                 phi=phi_new,
                 n_t=n_t_new,
                 ctx_weights=ctx_weights,
@@ -101,7 +104,12 @@ class ContextTopicModel(ModelBase):
             n_t_total += n_t_step
             n_wt_total += n_wt_step
 
-            self._calc_metrics_batch(batch=batch, phi=phi_new, theta=theta)
+            self._calc_metrics_batch(
+                batch=batch,
+                phi=phi_new,
+                theta=theta,
+                token_mask=token_mask,
+            )
 
             batch_counter += 1
             if batch_counter == num_batches_before_update:
@@ -128,6 +136,7 @@ class ContextTopicModel(ModelBase):
         batch: jax.Array,
         phi: jax.Array,
         theta: jax.Array,
+        token_mask: jax.Array,
     ):
         if len(self._metrics) == 0:
             return
@@ -137,4 +146,5 @@ class ContextTopicModel(ModelBase):
                 batch=batch,
                 phi=phi,
                 theta=theta,
+                valid_mask=token_mask,
             )

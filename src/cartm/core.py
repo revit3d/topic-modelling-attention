@@ -38,29 +38,34 @@ def calc_attn(
     matrix: jax.Array,
     ctx_bounds: jax.Array,
     ctx_weights: jax.Array,
+    token_mask: jax.Array,
 ) -> jax.Array:
     batch_size, _ = matrix.shape
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
-    doc_ids = jnp.cumsum(ctx_bounds)
+
+    doc_ids = jnp.cumsum(ctx_bounds.astype(jnp.int32))
     offsets = jnp.arange(-ctx_len, ctx_len + 1)
     base_idx = jnp.arange(batch_size)
 
     idx = base_idx[None, :] + offsets[:, None]
-    valid = (idx >= 0) & (idx < batch_size)
-    idx_clipped = jnp.clip(idx, 0, batch_size - 1)
+    idx_valid = (idx >= 0) & (idx < batch_size)
+    idx_safe = jnp.clip(idx, 0, batch_size - 1)
 
-    shifted = matrix[idx_clipped]
-    gathered_doc = doc_ids[idx_clipped]
-    mask = valid & (gathered_doc == doc_ids[None, :])
+    shifted = matrix[idx_safe]
+    shifted_doc_ids = doc_ids[idx_safe]
 
-    mask_f = mask.astype(matrix.dtype)
-    coeff = ctx_weights[:, None] * mask_f
+    target_valid = token_mask[None, :]
+    source_valid = token_mask[idx_safe]
+    same_doc = shifted_doc_ids == doc_ids[None, :]
+    mask = idx_valid & target_valid & source_valid & same_doc
+
+    coeff = ctx_weights[:, None] * mask
 
     denom = jnp.sum(coeff, axis=0)
     inv_denom = jnp.where(denom > EPSILON, 1.0 / denom, 0.0)
 
     coeff = coeff * inv_denom[None, :]
-    out = jnp.sum(coeff[..., None] * shifted, axis=0)
+    out = jnp.sum(coeff[..., None] * shifted, axis=0) * token_mask[:, None]
 
     return out
 
@@ -70,6 +75,7 @@ def calc_attn_transposed(
     matrix: jax.Array,
     ctx_bounds: jax.Array,
     ctx_weights: jax.Array,
+    token_mask: jax.Array,
 ) -> jax.Array:
     batch_size, _ = matrix.shape
     ctx_len = (ctx_weights.shape[-1] - 1) // 2
@@ -78,18 +84,21 @@ def calc_attn_transposed(
     base_idx = jnp.arange(batch_size)
 
     nbr_idx = base_idx[None, :] + offsets[:, None]
-    nbr_valid = (nbr_idx >= 0) & (nbr_idx < batch_size)
+    nbr_idx_valid = (nbr_idx >= 0) & (nbr_idx < batch_size)
     nbr_idx_safe = jnp.clip(nbr_idx, 0, batch_size - 1)
 
     shifted_doc_ids = doc_ids[nbr_idx_safe]
     same_doc = shifted_doc_ids == doc_ids[None, :]
-    mask = nbr_valid & same_doc
+
+    target_valid = token_mask[None, :]
+    neighbor_valid = token_mask[nbr_idx_safe]
+    mask = nbr_idx_valid & target_valid & neighbor_valid & same_doc
 
     weights = ctx_weights[:, None]
-    denom = jnp.sum(weights * mask.astype(matrix.dtype), axis=0)
+    denom = jnp.sum(weights * mask, axis=0)
     inv_denom = jnp.where(denom > EPSILON, 1.0 / denom, 0.0)
 
-    coeff = weights * mask.astype(matrix.dtype) * inv_denom[None, :]  # (2C + 1, I)
+    coeff = weights * mask * inv_denom[None, :]  # (2C + 1, I)
 
     src_idx = base_idx[None, :] - offsets[:, None]
     src_valid = (src_idx >= 0) & (src_idx < batch_size)
@@ -97,7 +106,7 @@ def calc_attn_transposed(
 
     gathered_matrix = matrix[src_idx_safe]  # (2C + 1, I, T)
     gathered_coeff = coeff[jnp.arange(coeff.shape[0])[:, None], src_idx_safe]
-    gathered_coeff = gathered_coeff * src_valid.astype(matrix.dtype)
+    gathered_coeff = gathered_coeff * src_valid
 
-    out = jnp.sum(gathered_coeff[..., None] * gathered_matrix, axis=0)
+    out = jnp.sum(gathered_coeff[..., None] * gathered_matrix, axis=0) * token_mask[:, None]
     return out

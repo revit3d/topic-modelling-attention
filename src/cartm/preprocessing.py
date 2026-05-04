@@ -278,10 +278,25 @@ class CorpusLoader:
 
 
 class BatchedCorpusLoader:
-    def __init__(self, data: Array, doc_bounds: Array, *, batch_size: int = 10000):
+    def __init__(
+        self,
+        data: Array,
+        doc_bounds: Array,
+        *,
+        batch_size: int = 10000,
+        pad_token_id: int = 0,
+        split_documents: bool = False,
+    ):
         """
-        Split tokenized data into batches. Instance of this class can be passed
-        directly to ContextTopicModel for batched fitting.
+        Split tokenized data into fixed-shape, document-aligned batches.
+
+        Returned batch tuple:
+
+            data_batch:       (batch_size,)
+            doc_bounds_batch: (batch_size,)
+            valid_mask:       (batch_size,)
+
+        `valid_mask == False` marks padding tokens.
 
         Args:
             data: array of tokens with shape (I, ),
@@ -289,26 +304,102 @@ class BatchedCorpusLoader:
             doc_bounds: array of shape (I, ),
                 containing ohe of document bounds.
             batch_size: size of a single batch.
+            pad_token_id: token used for padding data_batch
+                to batch_size.
+            split_documents: if True, each document with
+                length > batch_size will be split into two or more batches.
+                If false, an error will be raised if such document
+                will be encountered in data.
         """
         self.batch_size = batch_size
+        self.pad_token_id = pad_token_id
+        self.split_documents = split_documents
         self._batches = []
 
-        data_len = data.shape[0]
-        num_batches = (data_len + batch_size - 1) // batch_size
+        data_np = np.asarray(data, dtype=np.int32)
+        bounds_np = np.asarray(doc_bounds, dtype=bool)
 
-        for i in range(num_batches):
-            start_idx = i * self.batch_size
-            end_idx = min((i + 1) * self.batch_size, data_len)
+        if data_np.ndim != 1:
+            raise ValueError("data must be 1-dimensional")
+        if bounds_np.shape != data_np.shape:
+            raise ValueError("doc_bounds must have the same shape as data")
 
-            data_batch = data[start_idx:end_idx]
-            doc_bounds_batch = doc_bounds[start_idx:end_idx]
+        data_len = data_np.shape[0]
+        if data_len == 0:
+            return
 
-            self._batches.append((data_batch, doc_bounds_batch))
+        if not split_documents:
+            doc_starts = np.concatenate([[0], np.flatnonzero(bounds_np)])
+            doc_starts = np.unique(doc_starts)
+            doc_starts.sort()
+
+            doc_ends = np.concatenate([doc_starts[1:], [data_len]])
+
+            doc_lens = doc_ends - doc_starts
+            max_doc_len = doc_lens.max().item()
+
+            if max_doc_len > self.batch_size:
+                raise ValueError(
+                    f"Found document of length {max_doc_len}, but batch_size={self.batch_size}. "
+                    "To avoid splitting documents, batch_size must be at least the longest "
+                    "tokenized document length. To ignore this error, pass split_documents=True."
+            )
+
+        def emit_batch(start_idx: int, end_idx: int):
+            real_len = end_idx - start_idx
+            assert real_len > 0
+
+            data_batch = np.full(
+                self.batch_size,
+                fill_value=self.pad_token_id,
+                dtype=np.int32,
+            )
+            bounds_batch = np.zeros(self.batch_size, dtype=bool)
+            valid_mask = np.zeros(self.batch_size, dtype=bool)
+
+            data_batch[:real_len] = data_np[start_idx:end_idx]
+            bounds_batch[:real_len] = bounds_np[start_idx:end_idx]
+            valid_mask[:real_len] = True
+
+            bounds_batch[0] = False
+            if real_len < self.batch_size:
+                bounds_batch[real_len] = True
+
+            self._batches.append(
+                (
+                    jnp.asarray(data_batch, dtype=jnp.int32),
+                    jnp.asarray(bounds_batch, dtype=jnp.bool_),
+                    jnp.asarray(valid_mask, dtype=jnp.bool_),
+                )
+            )
+
+        batch_start = int(doc_starts[0])
+        batch_end = batch_start
+        used = 0
+
+        for doc_start, doc_end in zip(doc_starts, doc_ends):
+            doc_len = doc_end - doc_start
+
+            if doc_len == 0:
+                continue
+
+            if used + doc_len > self.batch_size:
+                emit_batch(batch_start, batch_end)
+                used = 0
+
+            if used == 0:
+                batch_start = doc_start
+
+            batch_end = doc_end
+            used += doc_len
+
+        if used > 0:
+            emit_batch(batch_start, batch_end)
 
     def __len__(self):
         return len(self._batches)
 
-    def __getitem__(self, idx) -> tuple[Array, Array]:
+    def __getitem__(self, idx) -> tuple[Array, Array, Array]:
         return self._batches[idx]
 
     def __iter__(self):

@@ -38,12 +38,14 @@ class Metric(ABC):
         batch: Array,
         phi: Array,
         theta: Array,
+        valid_mask: Array,
     ):
         """
         Args:
-            batch: matrix of shape (I,), containing tokens.
+            batch: matrix of shape (I,), tokenized documents.
             phi: matrix of shape (W, T), representing distribution p(w|t).
             theta: matrix of shape (I, T), representing distribution p(t|C_i).
+            valid_mask: matrix of shape (I,), padding mask
         """
         pass
 

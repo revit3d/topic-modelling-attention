@@ -22,7 +22,7 @@ def calc_decorrelation_grad_primitive(
                 if t == s:
                     continue
                 grad[w][t] += phi[w][s]
-    return tau * grad
+    return -tau * grad
 
 
 def test_sparsity_reg(phi, config):

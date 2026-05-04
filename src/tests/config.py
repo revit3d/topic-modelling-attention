@@ -1,13 +1,13 @@
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class TestConfig:
-    vocab_size = 30
-    n_words = 150
-    n_documents = 20
-    n_topics = 12
-    ctx_len = 5
-    gamma = 0.6
-    num_attn_passes = 1
-    seed = 42
+    vocab_size: int = 30
+    n_words: int = 150
+    n_documents: int = 20
+    n_topics: int = 12
+    ctx_len: int = 5
+    gamma: float = 0.6
+    num_attn_passes: int = 1
+    seed: int = 42

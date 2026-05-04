@@ -35,10 +35,18 @@ def test_norm(config):
 
 
 def test_attn(phi, data, doc_bounds, config):
+    pad_len = 50
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
     matrix = phi[data]
+    token_mask = jnp.concatenate(
+        [
+            jnp.ones_like(doc_bounds),
+            jnp.zeros(pad_len),
+        ],
+        dtype=jnp.bool_,
+    )
 
     attn_primitive = calc_attn_primitive(
         matrix=matrix,
@@ -50,16 +58,31 @@ def test_attn(phi, data, doc_bounds, config):
         matrix=matrix,
         ctx_bounds=doc_bounds,
         ctx_weights=ctx_weights,
+        token_mask=token_mask[:len(doc_bounds)],
     )
-    assert_allclose(jnp.abs(attn_fast - attn_primitive).sum(), 0.0, atol=1e-5)
+    attn_fast_padded = calc_attn(
+        matrix=jnp.concatenate([matrix, jnp.zeros((pad_len, config.n_topics))]),
+        ctx_bounds=jnp.concatenate([doc_bounds, jnp.zeros(pad_len)]),
+        ctx_weights=ctx_weights,
+        token_mask=token_mask,
+    )[:len(doc_bounds)]
     assert_allclose(attn_fast, attn_primitive, rtol=1e-5, atol=1e-6)
+    assert_allclose(attn_fast_padded, attn_primitive, rtol=1e-5, atol=1e-6)
 
 
 def test_attn_transposed(phi, data, doc_bounds, config):
+    pad_len = 50
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
     matrix = phi[data]
+    token_mask = jnp.concatenate(
+        [
+            jnp.ones_like(doc_bounds),
+            jnp.zeros(pad_len),
+        ],
+        dtype=jnp.bool_,
+    )
 
     attn_primitive = calc_attn_transposed_primitive(
         matrix=matrix,
@@ -71,8 +94,16 @@ def test_attn_transposed(phi, data, doc_bounds, config):
         matrix=matrix,
         ctx_bounds=doc_bounds,
         ctx_weights=ctx_weights,
+        token_mask=token_mask[:len(doc_bounds)],
     )
+    attn_fast_padded = calc_attn_transposed(
+        matrix=jnp.concatenate([matrix, jnp.zeros((pad_len, config.n_topics))]),
+        ctx_bounds=jnp.concatenate([doc_bounds, jnp.zeros(pad_len)]),
+        ctx_weights=ctx_weights,
+        token_mask=token_mask,
+    )[:len(doc_bounds)]
     assert_allclose(attn_fast, attn_primitive, rtol=1e-5, atol=1e-6)
+    assert_allclose(attn_fast_padded, attn_primitive, rtol=1e-5, atol=1e-6)
 
 
 def test_attn_linear_invariant(doc_bounds, config):
@@ -87,11 +118,13 @@ def test_attn_linear_invariant(doc_bounds, config):
         matrix=x,
         ctx_bounds=doc_bounds,
         ctx_weights=ctx_weights,
+        token_mask=jnp.ones_like(doc_bounds, dtype=jnp.bool_),
     )
     attn_backward = calc_attn_transposed(
         matrix=y,
         ctx_bounds=doc_bounds,
         ctx_weights=ctx_weights,
+        token_mask=jnp.ones_like(doc_bounds, dtype=jnp.bool_),
     )
     left = attn_forward.T @ y
     right = x.T @ attn_backward

@@ -26,6 +26,7 @@ class SparsityMetric(Metric):
         batch: Array,
         phi: Array,
         theta: Array,
+        valid_mask: Array,
     ):
         self._num_zeros = jnp.sum(jnp.abs(phi) < self.eps).item()
         self._num_elems = phi.shape[0] * phi.shape[1]

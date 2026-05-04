@@ -58,7 +58,10 @@ def document_bounds() -> jax.Array:
 @pytest.fixture
 def preprocessor() -> CorpusLoader:
     stemmer = PorterStemmer()
-    return CorpusLoader(token_normalizer=lambda doc: stemmer.stem(doc))
+    return CorpusLoader(
+        token_normalizer=stemmer.stem,
+        stopwords={"the", "into", "i", "there", "no", "to", "before"},
+    )
 
 
 def test_preprocess_text(raw_data, expected_words, preprocessor):
@@ -98,23 +101,27 @@ def test_fit_transform(raw_data, expected_words, document_bounds, preprocessor):
 
 def test_batch_loader(tokenized_data, document_bounds):
     data, doc_bounds = tokenized_data, document_bounds
-    batch_loader = BatchedCorpusLoader(data, doc_bounds, batch_size=4)
+    batch_loader = BatchedCorpusLoader(data, doc_bounds, batch_size=4, pad_token_id=-1)
 
     assert len(batch_loader) == 4
 
-    batch1_data, batch1_bounds = batch_loader[0]
-    batch2_data, batch2_bounds = batch_loader[1]
-    batch3_data, batch3_bounds = batch_loader[2]
-    batch4_data, batch4_bounds = batch_loader[3]
+    batch1_data, batch1_bounds, mask1 = batch_loader[0]
+    batch2_data, batch2_bounds, mask2 = batch_loader[1]
+    batch3_data, batch3_bounds, mask3 = batch_loader[2]
+    batch4_data, batch4_bounds, mask4 = batch_loader[3]
 
-    assert batch1_data.tolist() == [0, 1, 2, 3]
+    assert batch1_data.tolist() == [0, 1, 2, -1]
     assert batch1_bounds.tolist() == [0, 0, 0, 1]
+    assert mask1.tolist() == [1, 1, 1, 0]
 
-    assert batch2_data.tolist() == [4, 5, 6, 7]
-    assert batch2_bounds.tolist() == [0, 0, 0, 1]
+    assert batch2_data.tolist() == [3, 4, 5, 6]
+    assert batch2_bounds.tolist() == [0, 0, 0, 0]
+    assert mask2.tolist() == [1, 1, 1, 1]
 
-    assert batch3_data.tolist() == [8, 8, 9, 10]
-    assert batch3_bounds.tolist() == [0, 0, 0, 1]
+    assert batch3_data.tolist() == [7, 8, 8, 9]
+    assert batch3_bounds.tolist() == [0, 0, 0, 0]
+    assert mask3.tolist() == [1, 1, 1, 1]
 
-    assert batch4_data.tolist() == [11, 8]
-    assert batch4_bounds.tolist() == [0, 0]
+    assert batch4_data.tolist() == [10, 11, 8, -1]
+    assert batch4_bounds.tolist() == [0, 0, 0, 1]
+    assert mask4.tolist() == [1, 1, 1, 0]

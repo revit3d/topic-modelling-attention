@@ -1,5 +1,7 @@
 import pytest
+
 import jax
+import jax.numpy as jnp
 from numpy.testing import assert_allclose
 
 from cartm import AttentiveTopicModel
@@ -78,9 +80,11 @@ def test_step(phi, n_t, data, doc_bounds, config):
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
-    theta_model, n_t_model, n_wt_model, N_wt_model = AttentiveTopicModel._step(  # noqa
+    token_mask = jnp.ones_like(data, dtype=jnp.bool_)
+    theta_model, n_t_model, n_wt_model, N_wt_model = AttentiveTopicModel._step(
         batch=data,
         ctx_bounds=doc_bounds,
+        token_mask=token_mask,
         phi=phi,
         n_t=n_t,
         ctx_weights=ctx_weights,

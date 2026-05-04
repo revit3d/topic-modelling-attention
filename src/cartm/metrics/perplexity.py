@@ -24,14 +24,15 @@ class PerplexityMetric(Metric):
         batch: Array,
         phi: Array,
         theta: Array,
+        valid_mask: Array,
     ):
-        self._num_words += len(batch)
+        self._num_words += valid_mask.sum().item()
 
         # p(w_i|C_i) = p(w_i|t)p(t|C_i) = \sum_t (phi_it * theta_it)
         p_wi = jnp.sum(theta * phi[batch], axis=1)
 
         # L = \sum_d \sum_w n_dw \log p(w|d) = \sum_i 1 * \log p(w_i|C_i)
-        self._likelihood += jnp.sum(jnp.log(p_wi + EPSILON))
+        self._likelihood += jnp.sum(jnp.log(p_wi + EPSILON) * valid_mask)
 
     def _flush(self) -> float:
         # perplexity = exp{-L / I}

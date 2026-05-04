@@ -193,15 +193,18 @@ def test_perplexity(data, phi, theta, config):
         n_words=config.n_words,
     )
     perplexity_metric = mtc.PerplexityMetric()
+    valid_mask = jnp.ones_like(data, dtype=jnp.bool_)
     perplexity_metric.partial_update(
         batch=data[:50],
         phi=phi,
         theta=theta[:50],
+        valid_mask=valid_mask[:50],
     )
     perplexity_metric.partial_update(
         batch=data[50:],
         phi=phi,
         theta=theta[50:],
+        valid_mask=valid_mask[50:],
     )
     perplexity = perplexity_metric.flush()
     assert_allclose(perplexity, perplexity_primitive, rtol=1e-5, atol=1e-6)
@@ -221,6 +224,7 @@ def test_sparsity(zero_threshold, data, phi, theta, config):
         batch=data,
         phi=phi_wt_thresh,
         theta=theta,
+        valid_mask=jnp.ones_like(data, dtype=jnp.bool_),
     )
     sparsity = sparsity_metric.flush()
     assert_allclose(sparsity, sparsity_primitive, rtol=1e-5, atol=1e-6)
@@ -244,6 +248,7 @@ def test_topic_variance(distance_metric, data, phi, theta, config):
         batch=data,
         phi=phi,
         theta=theta,
+        valid_mask=jnp.ones_like(data, dtype=jnp.bool_),
     )
     topic_variance = topic_variance_metric.flush()
     assert_allclose(topic_variance, topic_variance_primitive, rtol=1e-5, atol=1e-6)
@@ -269,6 +274,7 @@ def test_coherence(data, doc_bounds, phi, theta, config):
         batch=data,
         phi=phi,
         theta=theta,
+        valid_mask=jnp.ones_like(data, dtype=jnp.bool_),
     )
     coherence = coherence_metric.flush()
     assert_allclose(coherence, coherence_primitive, rtol=1e-5, atol=1e-6)

@@ -51,6 +51,7 @@ class TopicVarianceMetric(Metric):
         batch: Array,
         phi: Array,
         theta: Array,
+        valid_mask: Array,
     ):
         self._last_phi = phi
 

@@ -1,6 +1,7 @@
 import pytest
 
 import jax
+import jax.numpy as jnp
 from numpy.testing import assert_allclose
 
 from cartm import ContextTopicModel
@@ -47,7 +48,7 @@ def test_step(phi, n_t, data, doc_bounds, config):
         n_topics=config.n_topics,
         n_words=config.n_words,
     )
-    n_t_new = calc_n_t_primitive(
+    n_t_primitive = calc_n_t_primitive(
         p_ti=p_ti_primitive, n_topics=config.n_topics, n_words=config.n_words
     )
     phi_primitive = calc_phi_wt_primitive(
@@ -62,9 +63,11 @@ def test_step(phi, n_t, data, doc_bounds, config):
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
+    token_mask = jnp.ones_like(data, dtype=jnp.bool_)
     theta_model, n_t_model, n_wt_model = ContextTopicModel._step(
         batch=data,
         ctx_bounds=doc_bounds,
+        token_mask=token_mask,
         phi=phi,
         n_t=n_t,
         ctx_weights=ctx_weights,
@@ -77,18 +80,46 @@ def test_step(phi, n_t, data, doc_bounds, config):
         n_wt=n_wt_model,
     )
     assert_allclose(theta_model, theta_primitive, rtol=1e-5, atol=1e-6)
-    assert_allclose(n_t_model, n_t_new, rtol=1e-5, atol=1e-6)
+    assert_allclose(n_t_model, n_t_primitive, rtol=1e-5, atol=1e-6)
     assert_allclose(phi_model, phi_primitive, rtol=1e-5, atol=1e-6)
 
 
-def test_batched_step(model, data, doc_bounds, config):
-    batches = BatchedCorpusLoader(data=data, doc_bounds=doc_bounds, batch_size=10)
+def test_batched_step(model, phi, n_t, data, doc_bounds, config):
+    phi_hatch_primitive = calc_phi_hatch_primitive(
+        phi=phi, n_t=n_t, vocab_size=config.vocab_size, n_topics=config.n_topics
+    )
+    theta_primitive = calc_theta_primitive(
+        data=data,
+        phi_hatch=phi_hatch_primitive,
+        doc_bounds=doc_bounds,
+        ctx_len=config.ctx_len,
+        gamma=config.gamma,
+    )
+    p_ti_primitive = calc_p_it_primitive(
+        data=data,
+        phi=phi,
+        theta=theta_primitive,
+        n_topics=config.n_topics,
+        n_words=config.n_words,
+    )
+    n_t_primitive = calc_n_t_primitive(
+        p_ti=p_ti_primitive, n_topics=config.n_topics, n_words=config.n_words
+    )
+    phi_primitive = calc_phi_wt_primitive(
+        data=data,
+        p_ti=p_ti_primitive,
+        vocab_size=config.vocab_size,
+        n_topics=config.n_topics,
+        n_words=config.n_words,
+    )
+
+    batches = BatchedCorpusLoader(data=data, doc_bounds=doc_bounds, batch_size=30)
     grad_reg = jax.grad(lambda _: 0.0)
     ctx_weights = get_context_weights_1d(
         ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
     )
 
-    _ = model._batched_step_wrapper(
+    phi_model, n_t_model = model._batched_step_wrapper(
         batches=batches,
         ctx_weights=ctx_weights,
         grad_reg=grad_reg,
@@ -96,14 +127,8 @@ def test_batched_step(model, data, doc_bounds, config):
         lr=0.01,
         num_batches_before_update=-1,
     )
-    _ = model._batched_step_wrapper(
-        batches=batches,
-        ctx_weights=ctx_weights,
-        grad_reg=grad_reg,
-        num_attn_passes=1,
-        lr=0.01,
-        num_batches_before_update=1,
-    )
+    assert_allclose(n_t_model, n_t_primitive, rtol=1e-5, atol=1e-6)
+    assert_allclose(phi_model, phi_primitive, rtol=1e-5, atol=1e-6)
 
 
 def test_add_remove_metric(model):

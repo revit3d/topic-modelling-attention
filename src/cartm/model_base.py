@@ -172,7 +172,7 @@ class ModelBase(ABC):
 
     def fit(
         self,
-        batches: Iterable[tuple[jax.Array, jax.Array]],
+        batches: Iterable[tuple[jax.Array, jax.Array, jax.Array]],
         *,
         lr: float = 0.1,
         num_batches_before_update: int = -1,
@@ -189,11 +189,12 @@ class ModelBase(ABC):
         n batches, see `num_batches_before_update` and `lr` parameters.
 
         Args:
-            batches: Iterable returning tuples (data_batch, ctx_bounds_batch), where
-                data_batch is an array of shape (I, ), containing tokenized words
-                of each document and ctx_bounds_batch is an array of shape (B, )
-                containing bounds for context. Words beyond the bound are ignored
-                in the context.
+            batches: Iterable returning tuples (data_batch, ctx_bounds_batch, token_mask), where
+                - data_batch is an array of shape (I, ), containing tokenized words
+                    of each document.
+                - ctx_bounds_batch is an array of shape (B,) containing bounds for context.
+                    Words beyond the bound are ignored in the context.
+                - token_mask is an array of shape (B,) containing mask of valid tokens in batch
             lr: coefficient for updating phi in EMA mode:
                 phi = phi_prev * (1 - lr) + phi_new * lr
             num_batches_before_update: if positive, batched algorithm updates phi
@@ -215,8 +216,12 @@ class ModelBase(ABC):
         grad_regularization = self._compose_regularizations()
 
         n_w = jnp.zeros(self.vocab_size)
-        for batch, _ in batches:
-            n_w += jnp.bincount(batch, length=self.vocab_size)
+        for batch, _, token_mask in batches:
+            n_w += jnp.bincount(
+                batch,
+                weights=token_mask,
+                length=self.vocab_size,
+            )
         self.p_w = n_w / jnp.sum(n_w)  # (W,)
 
         for it in range(max_iter):
