@@ -21,4 +21,4 @@ class DecorrelationRegularization(Regularization):
         corr_matrix = phi_wt.T @ phi_wt  # (T, T)
         # remove duplicates and diagonal terms
         corr_triu = jnp.triu(corr_matrix, k=1)
-        return jnp.sum(corr_triu)
+        return -jnp.sum(corr_triu)

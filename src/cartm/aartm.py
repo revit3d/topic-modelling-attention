@@ -95,8 +95,7 @@ class AttentiveTopicModel(ModelBase):
         def flush():
             nonlocal phi_new, n_t_new
 
-            phi_wt = self.renormalize_phi(p_w=self.p_w, phi=phi_new)
-            grad_phi = grad_reg(phi_wt)
+            grad_phi = grad_reg(phi_new)
             phi_step = self._update_phi(
                 grad_phi=grad_phi, n_wt=n_wt_total, N_wt=N_wt_total
             )
@@ -137,6 +136,16 @@ class AttentiveTopicModel(ModelBase):
         self.phi = norm(self.phi, axis=1)
 
         self.n_t = jnp.ones(self.n_topics, dtype=jnp.float32)
+
+    def _compose_regularizations(self):
+        regs = self._regularizations.values()
+        reg_grad = jax.grad(
+            lambda x: sum(
+                [1.0,]
+                + [reg(self.renormalize_phi(p_w=self.p_w, phi=x)) for reg in regs]
+            )
+        )
+        return jax.jit(reg_grad)
 
     @staticmethod
     @jax.jit
