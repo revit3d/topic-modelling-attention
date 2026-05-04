@@ -278,7 +278,7 @@ class CorpusLoader:
 
 
 class BatchedCorpusLoader:
-    def __init__(
+    def __init__(  # noqa (C901)
         self,
         data: Array,
         doc_bounds: Array,
@@ -343,7 +343,7 @@ class BatchedCorpusLoader:
                     f"Found document of length {max_doc_len}, but batch_size={self.batch_size}. "
                     "To avoid splitting documents, batch_size must be at least the longest "
                     "tokenized document length. To ignore this error, pass split_documents=True."
-            )
+                )
 
         def emit_batch(start_idx: int, end_idx: int):
             real_len = end_idx - start_idx
