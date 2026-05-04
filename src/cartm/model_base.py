@@ -108,7 +108,7 @@ class ModelBase(ABC):
         """
         if not isinstance(regularization, Regularization):
             raise TypeError(
-                f"Regularization [{regularization.__name__}] has to be a subclass of "
+                f"Regularization has to be a subclass of "
                 f"the Regularization base class, got type {type(regularization)}"
             )
         self._regularizations[regularization.tag] = regularization
@@ -122,7 +122,7 @@ class ModelBase(ABC):
         """
         if not isinstance(metric, Metric):
             raise TypeError(
-                f"Metric [{metric.__name__}] has to be a subclass of "
+                f"Metric has to be a subclass of "
                 f"the Metric base class, got type {type(metric)}"
             )
         self._metrics[metric.tag] = metric

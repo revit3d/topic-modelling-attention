@@ -48,3 +48,11 @@ def phi(config: TestConfig):
 @pytest.fixture(scope="session")
 def n_t(config: TestConfig):
     return jnp.ones(config.n_topics)
+
+
+@pytest.fixture
+def theta(config):
+    key = jax.random.key(config.seed)
+    theta = jax.random.uniform(key=key, shape=(config.n_words, config.n_topics))
+    theta = theta / theta.sum(axis=1, keepdims=True)
+    return theta

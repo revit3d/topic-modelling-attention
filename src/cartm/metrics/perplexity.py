@@ -35,6 +35,9 @@ class PerplexityMetric(Metric):
         self._likelihood += jnp.sum(jnp.log(p_wi + EPSILON) * valid_mask)
 
     def _flush(self) -> float:
+        if self._num_words == 0:
+            raise ValueError("No words in current metric state")
+
         # perplexity = exp{-L / I}
         perplexity = jnp.exp(-self._likelihood / self._num_words).item()
         self._num_words = 0

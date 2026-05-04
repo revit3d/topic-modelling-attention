@@ -141,6 +141,9 @@ def test_add_remove_metric(model):
 
     assert len(model._metrics) == 0
 
+    with pytest.raises(TypeError, match="Metric"):
+        model.add_metric(object())  # type: ignore[arg-type]
+
 
 def test_add_remove_regularization(model):
     regularization = reg.DecorrelationRegularization(tau=0.3)
@@ -151,6 +154,9 @@ def test_add_remove_regularization(model):
     model.remove_regularization(regularization.tag)
 
     assert len(model._regularizations) == 0
+
+    with pytest.raises(TypeError, match="Regularization"):
+        model.add_regularization(object())  # type: ignore[arg-type]
 
 
 def test_compose_regularizations(model, phi):
