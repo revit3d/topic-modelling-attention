@@ -71,5 +71,4 @@ class NPMICoherenceMetric(Metric):
             topic_scores.append(topic_npmi[triu].mean())
 
         self._last_phi = None
-
         return np.mean(topic_scores).item()

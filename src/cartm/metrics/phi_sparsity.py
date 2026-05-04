@@ -31,4 +31,7 @@ class SparsityMetric(Metric):
         self._num_elems = phi.shape[0] * phi.shape[1]
 
     def _flush(self) -> float:
-        return self._num_zeros / self._num_elems
+        value = self._num_zeros / self._num_elems
+        self._num_zeros = 0
+        self._num_elems = 0
+        return value

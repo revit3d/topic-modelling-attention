@@ -79,6 +79,8 @@ class TopicVarianceMetric(Metric):
             jnp.full(len(dist_matrix), jnp.inf)
         )  # add inf to diagonal
         min_dist_per_topic = dist_matrix.min(axis=0)
+
+        self._last_phi = None
         return jnp.mean(min_dist_per_topic).item()
 
     @staticmethod
