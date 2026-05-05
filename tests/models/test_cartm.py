@@ -2,11 +2,12 @@ import pytest
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 from numpy.testing import assert_allclose
 
 from cartm import ContextTopicModel
 from cartm.core import get_context_weights_1d
-from cartm.preprocessing import BatchedCorpusLoader
+from cartm.preprocessing import CorpusDataLoader
 import cartm.metrics as mtc
 import cartm.regularization as reg
 from tests.algo_primitives import (
@@ -16,6 +17,38 @@ from tests.algo_primitives import (
     calc_n_t_primitive,
     calc_phi_wt_primitive,
 )
+
+
+def _docs_from_tokenized(data: jax.Array, document_bounds: jax.Array) -> list[str]:
+    tokens = [int(x) for x in np.asarray(data)]
+    bounds = [bool(x) for x in np.asarray(document_bounds)]
+
+    docs: list[str] = []
+    start = 0
+
+    for i in range(1, len(tokens)):
+        if bounds[i]:
+            docs.append(" ".join(f"w{token}" for token in tokens[start:i]))
+            start = i
+
+    docs.append(" ".join(f"w{token}" for token in tokens[start:]))
+    return docs
+
+
+def _loader_from_tokenized(
+    data: jax.Array,
+    document_bounds: jax.Array,
+    vocab_size: int,
+    batch_size: int,
+) -> CorpusDataLoader:
+    return CorpusDataLoader(
+        _docs_from_tokenized(data, document_bounds),
+        vocabulary={f"w{i}": i for i in range(vocab_size)},
+        tokenizer=str.split,
+        stopwords=(),
+        lower=False,
+        batch_size=batch_size,
+    )
 
 
 @pytest.fixture
@@ -86,7 +119,10 @@ def test_step(phi, n_t, data, doc_bounds, config):
 
 def test_batched_step(model, phi, n_t, data, doc_bounds, config):
     phi_hatch_primitive = calc_phi_hatch_primitive(
-        phi=phi, n_t=n_t, vocab_size=config.vocab_size, n_topics=config.n_topics
+        phi=phi,
+        n_t=n_t,
+        vocab_size=config.vocab_size,
+        n_topics=config.n_topics,
     )
     theta_primitive = calc_theta_primitive(
         data=data,
@@ -103,7 +139,9 @@ def test_batched_step(model, phi, n_t, data, doc_bounds, config):
         n_words=config.n_words,
     )
     n_t_primitive = calc_n_t_primitive(
-        p_ti=p_ti_primitive, n_topics=config.n_topics, n_words=config.n_words
+        p_ti=p_ti_primitive,
+        n_topics=config.n_topics,
+        n_words=config.n_words,
     )
     phi_primitive = calc_phi_wt_primitive(
         data=data,
@@ -113,10 +151,18 @@ def test_batched_step(model, phi, n_t, data, doc_bounds, config):
         n_words=config.n_words,
     )
 
-    batches = BatchedCorpusLoader(data=data, doc_bounds=doc_bounds, batch_size=30)
+    batches = _loader_from_tokenized(
+        data=data,
+        document_bounds=doc_bounds,
+        vocab_size=config.vocab_size,
+        batch_size=config.n_words,
+    )
+
     grad_reg = jax.grad(lambda _: 0.0)
     ctx_weights = get_context_weights_1d(
-        ctx_len=config.ctx_len, gamma=config.gamma, self_aware=False
+        ctx_len=config.ctx_len,
+        gamma=config.gamma,
+        self_aware=False,
     )
 
     phi_model, n_t_model = model._batched_step_wrapper(

@@ -118,7 +118,7 @@ class CorpusDataLoader:
             raise ValueError("batch_size must be positive")
 
         self.batch_size = batch_size
-        self.pad_token_id = 0
+        self.pad_token_id = -1
         self.split_documents = split_documents
 
         self._lower = lower
@@ -136,6 +136,7 @@ class CorpusDataLoader:
 
         if self._vocab is not None:
             self._validate_vocabulary(self._vocab)
+            self._vocab["<PAD>"] = self.pad_token_id
 
         if preprocessor is not None and not callable(preprocessor):
             raise TypeError(f"preprocessor must be callable, got {type(preprocessor)}")
@@ -275,7 +276,7 @@ class CorpusDataLoader:
             )
 
         self._vocab = {"<PAD>": self.pad_token_id}
-        self._vocab.update({word: i + 1 for i, word in enumerate(vocab_words)})
+        self._vocab.update({word: i for i, word in enumerate(vocab_words)})
         self.n_docs_ = n_docs
         self.doc_freq_ = doc_freq
 

@@ -6,7 +6,37 @@ from numpy.testing import assert_allclose
 
 from cartm.core import EPSILON
 import cartm.metrics as mtc
-from cartm.preprocessing import build_bow
+from cartm.preprocessing import CorpusDataLoader, build_bow_from_loader
+
+
+def _docs_from_tokenized(data: jax.Array, document_bounds: jax.Array) -> list[str]:
+    tokens = [int(x) for x in np.asarray(data)]
+    bounds = [bool(x) for x in np.asarray(document_bounds)]
+
+    docs: list[str] = []
+    start = 0
+
+    for i in range(1, len(tokens)):
+        if bounds[i]:
+            docs.append(" ".join(f"w{token}" for token in tokens[start:i]))
+            start = i
+
+    docs.append(" ".join(f"w{token}" for token in tokens[start:]))
+    return docs
+
+
+def _loader_from_tokenized(
+    data: jax.Array,
+    document_bounds: jax.Array,
+    vocab_size: int,
+) -> CorpusDataLoader:
+    return CorpusDataLoader(
+        _docs_from_tokenized(data, document_bounds),
+        vocabulary={f"w{i}": i for i in range(vocab_size)},
+        tokenizer=str.split,
+        stopwords=(),
+        lower=False,
+    )
 
 
 def calc_npmi_coherence_primitive(
@@ -58,11 +88,17 @@ def calc_npmi_coherence_primitive(
 
 def test_npmi_coherence(data, doc_bounds, phi, theta, config):
     top_k = 8
-    bow = build_bow(
-        tokenized_data=data,
+
+    loader = _loader_from_tokenized(
+        data=data,
         document_bounds=doc_bounds,
         vocab_size=config.vocab_size,
     )
+    bow = build_bow_from_loader(loader)
+
+    assert bow.shape[0] == config.n_documents
+    assert bow.shape[1] == config.vocab_size + 1
+
     coherence_primitive = calc_npmi_coherence_primitive(
         bow=bow,
         phi_wt=phi,
@@ -71,6 +107,7 @@ def test_npmi_coherence(data, doc_bounds, phi, theta, config):
         n_topics=config.n_topics,
         top_k=top_k,
     )
+
     coherence_metric = mtc.NPMICoherenceMetric(bow=bow, top_k=top_k)
     coherence_metric.partial_update(
         batch=data,
@@ -78,7 +115,9 @@ def test_npmi_coherence(data, doc_bounds, phi, theta, config):
         theta=theta,
         valid_mask=jnp.ones_like(data, dtype=jnp.bool_),
     )
+
     coherence = coherence_metric.flush()
+
     assert_allclose(coherence, coherence_primitive, rtol=1e-5, atol=1e-6)
 
 
