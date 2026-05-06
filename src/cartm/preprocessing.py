@@ -55,6 +55,7 @@ class CorpusDataLoader:
         tokenizer: Callable[[str], Iterable[str]] | None = None,
         token_normalizer: Callable[[str], str] | None = None,
         stopwords: Iterable[str] | None = None,
+        pad_token_id: int = -1,
         min_token_len: int = 2,
         max_token_len: int = 20,
         min_df: int | float = 1,
@@ -86,6 +87,7 @@ class CorpusDataLoader:
                 in splitted text, typically a stemmer or a lemmatizer.
             stopwords: terms to be ignored in tokenized data.
                 If None, uses default english stopwords from nltk module.
+            pad_token_id: token used for padding.
             min_token_len: if length of a normalized token is less than
                 min_token_len, it is ignored.
             max_token_len: if length of a normalized token is more than
@@ -118,7 +120,7 @@ class CorpusDataLoader:
             raise ValueError("batch_size must be positive")
 
         self.batch_size = batch_size
-        self.pad_token_id = -1
+        self.pad_token_id = pad_token_id
         self.split_documents = split_documents
 
         self._lower = lower
@@ -136,7 +138,6 @@ class CorpusDataLoader:
 
         if self._vocab is not None:
             self._validate_vocabulary(self._vocab)
-            self._vocab["<PAD>"] = self.pad_token_id
 
         if preprocessor is not None and not callable(preprocessor):
             raise TypeError(f"preprocessor must be callable, got {type(preprocessor)}")
@@ -275,8 +276,7 @@ class CorpusDataLoader:
                 "Vocabulary is empty after applying min_df/max_df/token filters"
             )
 
-        self._vocab = {"<PAD>": self.pad_token_id}
-        self._vocab.update({word: i for i, word in enumerate(vocab_words)})
+        self._vocab = {word: i for i, word in enumerate(vocab_words)}
         self.n_docs_ = n_docs
         self.doc_freq_ = doc_freq
 

@@ -97,7 +97,7 @@ def test_npmi_coherence(data, doc_bounds, phi, theta, config):
     bow = build_bow_from_loader(loader)
 
     assert bow.shape[0] == config.n_documents
-    assert bow.shape[1] == config.vocab_size + 1
+    assert bow.shape[1] == config.vocab_size
 
     coherence_primitive = calc_npmi_coherence_primitive(
         bow=bow,

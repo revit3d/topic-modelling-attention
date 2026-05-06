@@ -95,17 +95,14 @@ def test_fit_infers_sorted_vocabulary_with_pad(
     vocabulary = loader.vocabulary
 
     assert vocabulary is not None
-    assert vocabulary["<PAD>"] == -1
-    assert set(vocabulary) == expected_vocabulary_words | {"<PAD>"}
+    assert set(vocabulary) == expected_vocabulary_words
 
-    # Inferred non-pad terms are sorted alphabetically and shifted by one
-    # because id 0 is reserved for <PAD>.
     expected_sorted_words = sorted(expected_vocabulary_words)
     assert [vocabulary[word] for word in expected_sorted_words] == list(
         range(len(expected_sorted_words))
     )
 
-    assert loader.vocab_size == len(expected_vocabulary_words) + 1
+    assert loader.vocab_size == len(expected_vocabulary_words)
     assert loader.n_docs_ == len(raw_data)
     assert loader.doc_freq_ is not None
     assert loader.doc_freq_["dream"] == 2
@@ -167,7 +164,7 @@ def test_iter_batches_documents_without_splitting(loader):
     batch3_data, batch3_bounds, batch3_mask = _batch_to_lists(batches[2])
     batch4_data, batch4_bounds, batch4_mask = _batch_to_lists(batches[3])
 
-    assert batch1_data == _ids(vocabulary, ["deep", "dark", "peer", "<PAD>"])
+    assert batch1_data == _ids(vocabulary, ["deep", "dark", "peer"]) + [-1]
     assert batch1_bounds == [False, False, False, True]
     assert batch1_mask == [True, True, True, False]
 
@@ -179,7 +176,7 @@ def test_iter_batches_documents_without_splitting(loader):
     assert batch3_bounds == [False, False, False, False]
     assert batch3_mask == [True, True, True, True]
 
-    assert batch4_data == _ids(vocabulary, ["ever", "dare", "dream", "<PAD>"])
+    assert batch4_data == _ids(vocabulary, ["ever", "dare", "dream"]) + [-1]
     assert batch4_bounds == [False, False, False, True]
     assert batch4_mask == [True, True, True, False]
 
@@ -204,7 +201,7 @@ def test_iter_batches_multiple_documents_in_one_batch(raw_data, custom_stopwords
     batch2_data, batch2_bounds, batch2_mask = _batch_to_lists(batches[1])
 
     assert batch1_data == (
-        _ids(vocabulary, ["deep", "dark", "peer", "long", "stood", "wonder", "fear", "<PAD>"])
+        _ids(vocabulary, ["deep", "dark", "peer", "long", "stood", "wonder", "fear"]) + [-1]
     )
     assert batch1_bounds == [
         False,
@@ -219,7 +216,7 @@ def test_iter_batches_multiple_documents_in_one_batch(raw_data, custom_stopwords
     assert batch1_mask == [True, True, True, True, True, True, True, False]
 
     assert batch2_data == (
-        _ids(vocabulary, ["doubt", "dream", "dream", "mortal", "ever", "dare", "dream", "<PAD>"])
+        _ids(vocabulary, ["doubt", "dream", "dream", "mortal", "ever", "dare", "dream"]) + [-1]
     )
     assert batch2_bounds == [
         False,
@@ -289,7 +286,7 @@ def test_provided_vocabulary_is_used_without_fit():
         stopwords=(),
     )
 
-    assert loader.vocabulary == {"<PAD>": -1, "alpha": 0, "beta": 1}
+    assert loader.vocabulary == {"alpha": 0, "beta": 1}
     assert list(loader.iter_encoded_docs()) == [[0, 1]]
 
 
@@ -302,10 +299,10 @@ def test_fit_force_rebuilds_provided_vocabulary():
     )
 
     loader.fit()
-    assert loader.vocabulary == {"<PAD>": -1, "alpha": 0}
+    assert loader.vocabulary == {"alpha": 0}
 
     loader.fit(force=True)
-    assert loader.vocabulary == {"<PAD>": -1, "beta": 0}
+    assert loader.vocabulary == {"beta": 0}
     assert loader.n_docs_ == 1
 
 
@@ -369,7 +366,7 @@ def test_fit_applies_integer_document_frequency_filters():
         max_df=2,
     ).fit()
 
-    assert loader.vocabulary == {"<PAD>": -1, "banana": 0}
+    assert loader.vocabulary == {"banana": 0}
 
 
 def test_fit_applies_float_document_frequency_filters():
@@ -387,7 +384,7 @@ def test_fit_applies_float_document_frequency_filters():
         max_df=2 / 3,  # floor(2 / 3 * 3) == 2
     ).fit()
 
-    assert loader.vocabulary == {"<PAD>": -1, "banana": 0}
+    assert loader.vocabulary == {"banana": 0}
 
 
 def test_fit_raises_when_resolved_min_df_exceeds_max_df():
@@ -478,8 +475,6 @@ def test_build_bow_from_loader_streams_encoded_documents(loader):
     assert bow.shape == (4, loader.vocab_size)
     assert bow.dtype == np.uint32
 
-    assert dense[:, vocabulary["<PAD>"]].sum() == 0
-
     assert dense[0, vocabulary["deep"]] == 1
     assert dense[0, vocabulary["dark"]] == 1
     assert dense[0, vocabulary["peer"]] == 1
@@ -492,7 +487,7 @@ def test_build_bow_from_loader_streams_encoded_documents(loader):
 def test_build_bow_from_loader_preserves_empty_encoded_documents():
     loader = CorpusDataLoader(
         ["known", "unknown", "known known"],
-        vocabulary={"<PAD>": 0, "known": 1},
+        vocabulary={"known": 0, "clown": 1},
         tokenizer=str.split,
         stopwords=(),
     )
@@ -501,7 +496,7 @@ def test_build_bow_from_loader_preserves_empty_encoded_documents():
 
     assert bow.shape == (3, 2)
     assert bow.toarray().tolist() == [
-        [0, 1],
+        [1, 0],
         [0, 0],
-        [0, 2],
+        [2, 0],
     ]
