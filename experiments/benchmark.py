@@ -7,7 +7,7 @@ import pandas as pd
 
 from cartm import AttentiveTopicModel
 from model_no_N_wt import AttentiveTopicModelNoNWT
-from cartm.preprocessing import BatchedCorpusLoader
+from experiments.common import TokenBatchLoader
 from common import prepare_data
 
 
@@ -106,18 +106,9 @@ if __name__ == "__main__":
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
     data = prepare_data("20ng")
 
-    def run_model(model, data, ctx_bounds):
-        model.fit(
-            data=data,
-            ctx_bounds=ctx_bounds,
-            max_iter=50,
-            verbose=0,
-            seed=np.random.randint(0, 1000),
-        )
-
     def run_model_batched(model, batches):
         model.fit(
-            data=batches,
+            batches,
             max_iter=50,
             verbose=0,
             seed=np.random.randint(0, 1000),
@@ -130,10 +121,11 @@ if __name__ == "__main__":
                 for model_type in [AttentiveTopicModelNoNWT, AttentiveTopicModel]:
                     for device in ['gpu']:
                         # prepare batches
-                        loader = BatchedCorpusLoader(
-                            data=data.train_tokens,
-                            doc_bounds=data.train_bounds,
+                        loader = TokenBatchLoader(
+                            data.train_tokens,
+                            data.train_bounds,
                             batch_size=batch_size,
+                            pad_token_id=0,
                         )
 
                         # prepare model
@@ -147,8 +139,9 @@ if __name__ == "__main__":
                         jax_device = jax.devices(device)[0]
                         tokenized_data = jax.device_put(data.train_tokens, device=jax_device)
                         document_bounds = jax.device_put(data.train_bounds, device=jax_device)
-                        loader._batches = [
-                            jax.device_put(batch, device=jax_device) for batch in loader._batches
+                        loader = [
+                            jax.device_put(batch, device=jax_device)
+                            for batch in loader
                         ]
 
                         config = {
@@ -159,7 +152,6 @@ if __name__ == "__main__":
                             "batch_size": batch_size,
                         }
 
-                        # batched benchmark
                         res = benchmark_any_fn(
                             run_model_batched,
                             model,

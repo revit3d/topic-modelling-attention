@@ -9,7 +9,7 @@ import nltk
 from sklearn.feature_extraction.text import TfidfTransformer
 
 from cartm import AttentiveTopicModel
-from cartm.preprocessing import BatchedCorpusLoader
+from experiments.common import TokenBatchLoader, build_bow_from_tokens
 from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
 from experiments.common import (
     prepare_data,
@@ -22,7 +22,6 @@ from experiments.common import (
     fit_topic_model,
     truncate_corpus,
 )
-from cartm.preprocessing import build_bow
 
 
 def normalize_rows(x: np.ndarray) -> np.ndarray:
@@ -150,13 +149,23 @@ def main():
                 max_tokens_per_doc=max_len,
             )
 
-            train_batches = BatchedCorpusLoader(train_tokens_t, train_bounds_t)
+            train_batches = TokenBatchLoader(
+                train_tokens_t,
+                train_bounds_t,
+                batch_size=args.batch_size,
+                pad_token_id=0,
+            )
             X_train = infer_doc_topics_aartm(
                 aartm,
                 train_batches,
                 num_attn_passes=args.num_attn_passes,
             )
-            test_batches = BatchedCorpusLoader(test_tokens_t, test_bounds_t)
+            test_batches = TokenBatchLoader(
+                test_tokens_t,
+                test_bounds_t,
+                batch_size=args.batch_size,
+                pad_token_id=0,
+            )
             X_test = infer_doc_topics_aartm(
                 aartm,
                 test_batches,
@@ -173,13 +182,23 @@ def main():
             )
             rows.append(metrics)
 
-            train_batches = BatchedCorpusLoader(train_tokens_t, train_bounds_t)
+            train_batches = TokenBatchLoader(
+                train_tokens_t,
+                train_bounds_t,
+                batch_size=args.batch_size,
+                pad_token_id=0,
+            )
             X_train = infer_doc_topics_aartm(
                 aartm_no_nwt,
                 train_batches,
                 num_attn_passes=args.num_attn_passes,
             )
-            test_batches = BatchedCorpusLoader(test_tokens_t, test_bounds_t)
+            test_batches = TokenBatchLoader(
+                test_tokens_t,
+                test_bounds_t,
+                batch_size=args.batch_size,
+                pad_token_id=0,
+            )
             X_test = infer_doc_topics_aartm(
                 aartm_no_nwt,
                 test_batches,
@@ -196,8 +215,8 @@ def main():
             )
             rows.append(metrics)
 
-            train_bow_t = build_bow(train_tokens_t, train_bounds_t, len(data.vocab))
-            test_bow_t = build_bow(test_tokens_t, test_bounds_t, len(data.vocab))
+            train_bow_t = build_bow_from_tokens(train_tokens_t, train_bounds_t, len(data.vocab))
+            test_bow_t = build_bow_from_tokens(test_tokens_t, test_bounds_t, len(data.vocab))
 
             X_train = normalize_rows(lda.transform(train_bow_t))
             X_test = normalize_rows(lda.transform(test_bow_t))

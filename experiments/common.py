@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
@@ -21,8 +23,11 @@ from datasets import load_dataset as hf_load_dataset
 
 from cartm import AttentiveTopicModel
 from cartm.core import EPSILON, norm, calc_attn
-from cartm.preprocessing import CorpusLoader, BatchedCorpusLoader, build_bow
+from cartm.preprocessing import CorpusDataLoader, build_bow_from_loader
 from cartm.regularization import DecorrelationRegularization
+
+
+Batch = tuple[jax.Array, jax.Array, jax.Array]
 
 
 @dataclass
@@ -34,7 +39,7 @@ class PreparedData:
     test_texts_filtered: list[str]
     y_train: np.ndarray
     y_test: np.ndarray
-    loader: CorpusLoader
+    loader: CorpusDataLoader
     train_tokens: jax.Array
     train_bounds: jax.Array
     test_tokens: jax.Array
@@ -45,6 +50,232 @@ class PreparedData:
     test_tfidf: sp.csr_matrix
     vocab: dict[str, int]
     id2word: dict[int, str]
+    min_token_len: int = 3
+    max_token_len: int = 20
+
+    def make_loader(
+        self,
+        split: Literal["train", "test"],
+        *,
+        batch_size: int = 10000,
+        split_documents: bool = False,
+    ) -> CorpusDataLoader:
+        texts = self.train_texts_filtered if split == "train" else self.test_texts_filtered
+
+        return CorpusDataLoader(
+            texts,
+            batch_size=batch_size,
+            split_documents=split_documents,
+            lower=True,
+            vocabulary=self.vocab,
+            min_token_len=self.min_token_len,
+            max_token_len=self.max_token_len,
+            min_df=1,
+            max_df=1.0,
+            pad_token_id=0,
+        )
+
+
+def doc_spans(bounds: np.ndarray | jax.Array, n_tokens: int) -> list[tuple[int, int]]:
+    bounds = np.asarray(bounds, dtype=bool)[:n_tokens]
+    if n_tokens == 0:
+        return []
+
+    starts_inside = np.flatnonzero(bounds)
+    starts_inside = starts_inside[starts_inside != 0]
+
+    starts = np.r_[0, starts_inside]
+    ends = np.r_[starts_inside, n_tokens]
+    return list(zip(starts, ends))
+
+
+def _make_padded_batch(
+    token_ids: list[int],
+    doc_bounds: list[bool],
+    *,
+    batch_size: int,
+    pad_token_id: int = 0,
+) -> Batch:
+    real_len = len(token_ids)
+    if real_len == 0:
+        raise ValueError("Cannot create an empty batch")
+    if real_len > batch_size:
+        raise ValueError(f"Batch length {real_len} exceeds batch_size={batch_size}")
+
+    data = np.full(batch_size, pad_token_id, dtype=np.int32)
+    bounds = np.zeros(batch_size, dtype=bool)
+    valid_mask = np.zeros(batch_size, dtype=bool)
+
+    data[:real_len] = np.asarray(token_ids, dtype=np.int32)
+    bounds[:real_len] = np.asarray(doc_bounds, dtype=bool)
+    valid_mask[:real_len] = True
+
+    # Padding starts a fake new doc. It is masked out, but this prevents
+    # padding from being treated as continuation of the last real document.
+    if real_len < batch_size:
+        bounds[real_len] = True
+
+    return (
+        jnp.asarray(data, dtype=jnp.int32),
+        jnp.asarray(bounds, dtype=jnp.bool_),
+        jnp.asarray(valid_mask, dtype=jnp.bool_),
+    )
+
+
+class TokenBatchLoader:
+    """
+    Lazy re-iterable batcher for already encoded flat token arrays.
+
+    Emits:
+        token_ids:   (batch_size,)
+        ctx_bounds:  (batch_size,)
+        token_mask:  (batch_size,)
+
+    This is needed by experiments that operate on already-tokenized corpora,
+    e.g. truncation/boundary-detection experiments.
+    """
+
+    def __init__(
+        self,
+        data: jax.Array | np.ndarray,
+        doc_bounds: jax.Array | np.ndarray,
+        *,
+        batch_size: int = 10000,
+        split_documents: bool = False,
+        pad_token_id: int = 0,
+    ):
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        self.tokens = np.asarray(data, dtype=np.int32)
+        self.bounds = np.asarray(doc_bounds, dtype=bool)
+        self.batch_size = batch_size
+        self.split_documents = split_documents
+        self.pad_token_id = pad_token_id
+
+    def __iter__(self) -> Iterator[Batch]:
+        batch_tokens: list[int] = []
+        batch_bounds: list[bool] = []
+
+        def flush() -> Batch:
+            batch = _make_padded_batch(
+                batch_tokens,
+                batch_bounds,
+                batch_size=self.batch_size,
+                pad_token_id=self.pad_token_id,
+            )
+            batch_tokens.clear()
+            batch_bounds.clear()
+            return batch
+
+        def append_segment(segment: np.ndarray, *, starts_new_doc: bool) -> None:
+            if len(segment) == 0:
+                return
+            batch_tokens.extend(segment.tolist())
+            batch_bounds.extend(
+                [starts_new_doc] + [False] * (len(segment) - 1)
+            )
+
+        for start, end in doc_spans(self.bounds, len(self.tokens)):
+            doc = self.tokens[start:end]
+            if len(doc) == 0:
+                continue
+
+            if not self.split_documents:
+                if len(doc) > self.batch_size:
+                    raise ValueError(
+                        f"Found document of length {len(doc)}, "
+                        f"but batch_size={self.batch_size}. "
+                        "Increase batch_size or use split_documents=True."
+                    )
+
+                if batch_tokens and len(batch_tokens) + len(doc) > self.batch_size:
+                    yield flush()
+
+                append_segment(doc, starts_new_doc=len(batch_tokens) > 0)
+                continue
+
+            offset = 0
+            is_continuation = False
+            while offset < len(doc):
+                if len(batch_tokens) == self.batch_size:
+                    yield flush()
+
+                free = self.batch_size - len(batch_tokens)
+                take = min(free, len(doc) - offset)
+
+                starts_new_doc = len(batch_tokens) > 0 and not is_continuation
+                append_segment(doc[offset:offset + take], starts_new_doc=starts_new_doc)
+
+                offset += take
+                is_continuation = True
+
+                if len(batch_tokens) == self.batch_size:
+                    yield flush()
+
+        if batch_tokens:
+            yield flush()
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def flatten_loader_to_arrays(loader: CorpusDataLoader) -> tuple[jax.Array, jax.Array]:
+    """
+    Convert a fitted CorpusDataLoader to old-style flat tokens + global doc bounds.
+
+    Used only by experiments that explicitly need flat token arrays.
+    """
+    tokens: list[int] = []
+    bounds: list[bool] = []
+
+    for doc_ids in loader.iter_encoded_docs():
+        if len(doc_ids) == 0:
+            continue
+
+        starts_new_doc = len(tokens) > 0
+        tokens.extend(doc_ids)
+        bounds.extend([starts_new_doc] + [False] * (len(doc_ids) - 1))
+
+    return (
+        jnp.asarray(tokens, dtype=jnp.int32),
+        jnp.asarray(bounds, dtype=jnp.bool_),
+    )
+
+
+def build_bow_from_tokens(
+    tokens: jax.Array | np.ndarray,
+    bounds: jax.Array | np.ndarray,
+    vocab_size: int,
+) -> sp.csr_matrix:
+    tokens_np = np.asarray(tokens, dtype=np.int32)
+    spans = doc_spans(bounds, len(tokens_np))
+
+    rows: list[int] = []
+    cols: list[int] = []
+    values: list[int] = []
+
+    for doc_id, (start, end) in enumerate(spans):
+        counts = Counter(tokens_np[start:end])
+        for token_id, count in counts.items():
+            rows.append(doc_id)
+            cols.append(int(token_id))
+            values.append(int(count))
+
+    if len(rows) == 0:
+        return sp.csr_matrix((len(spans), vocab_size), dtype=np.uint32)
+
+    return sp.csr_matrix(
+        (
+            np.asarray(values, dtype=np.uint32),
+            (
+                np.asarray(rows, dtype=np.int32),
+                np.asarray(cols, dtype=np.int32),
+            ),
+        ),
+        shape=(len(spans), vocab_size),
+        dtype=np.uint32,
+    )
 
 
 def load_text_classification_dataset(
@@ -89,7 +320,7 @@ def load_text_classification_dataset(
 def _tokenize_and_filter_empty_docs(
     texts: list[str],
     labels: np.ndarray,
-    loader: CorpusLoader,
+    loader: CorpusDataLoader,
 ) -> tuple[list[str], list[list[str]], np.ndarray]:
     kept_texts = []
     tokenized_docs = []
@@ -120,31 +351,22 @@ def prepare_data(
 ) -> PreparedData:
     train_texts, test_texts, y_train, y_test = load_text_classification_dataset(dataset_name)
 
-    loader = CorpusLoader(
+    loader = CorpusDataLoader(
+        train_texts,
         lower=True,
         min_df=min_df,
         max_df=max_df,
         min_token_len=min_token_len,
         max_token_len=max_token_len,
+        pad_token_id=0,
     )
-    loader.fit(train_texts)
+    loader.fit()
 
-    train_texts_filtered, tokenized_train, y_train = _tokenize_and_filter_empty_docs(
+    train_texts_filtered, _, y_train = _tokenize_and_filter_empty_docs(
         train_texts, y_train, loader
     )
-    test_texts_filtered, tokenized_test, y_test = _tokenize_and_filter_empty_docs(
+    test_texts_filtered, _, y_test = _tokenize_and_filter_empty_docs(
         test_texts, y_test, loader
-    )
-
-    train_tokens, train_bounds = loader._transform_impl(
-        tokenized_train,
-        return_doc_bounds=True,
-        preprocess=False,
-    )
-    test_tokens, test_bounds = loader._transform_impl(
-        tokenized_test,
-        return_doc_bounds=True,
-        preprocess=False,
     )
 
     vocab = loader.vocabulary
@@ -152,8 +374,28 @@ def prepare_data(
     vocab_size = len(vocab)
     id2word = {v: k for k, v in vocab.items()}
 
-    train_bow = build_bow(train_tokens, train_bounds, vocab_size)
-    test_bow = build_bow(test_tokens, test_bounds, vocab_size)
+    train_loader = CorpusDataLoader(
+        train_texts_filtered,
+        lower=True,
+        vocabulary=vocab,
+        min_token_len=min_token_len,
+        max_token_len=max_token_len,
+        pad_token_id=0,
+    )
+    test_loader = CorpusDataLoader(
+        test_texts_filtered,
+        lower=True,
+        vocabulary=vocab,
+        min_token_len=min_token_len,
+        max_token_len=max_token_len,
+        pad_token_id=0,
+    )
+
+    train_tokens, train_bounds = flatten_loader_to_arrays(train_loader)
+    test_tokens, test_bounds = flatten_loader_to_arrays(test_loader)
+
+    train_bow = build_bow_from_loader(train_loader)
+    test_bow = build_bow_from_loader(test_loader)
 
     tfidf = TfidfTransformer(norm="l2")
     train_tfidf = tfidf.fit_transform(train_bow)
@@ -189,14 +431,9 @@ def prepare_data(
         test_tfidf=test_tfidf,
         vocab=vocab,
         id2word=id2word,
+        min_token_len=min_token_len,
+        max_token_len=max_token_len,
     )
-
-
-def doc_spans(bounds: np.ndarray | jax.Array, n_tokens: int) -> list[tuple[int, int]]:
-    bounds = np.asarray(bounds, dtype=bool)
-    starts = np.r_[0, np.flatnonzero(bounds)]
-    ends = np.r_[np.flatnonzero(bounds), n_tokens]
-    return list(zip(starts, ends))
 
 
 def aggregate_doc_topics(
@@ -221,30 +458,68 @@ def normalize_cols(x: np.ndarray) -> np.ndarray:
 
 def infer_doc_topics_aartm(
     model: AttentiveTopicModel,
-    batches: DocumentBatchedCorpusLoader,
+    batches: Iterable[Batch],
     *,
     num_attn_passes: int = 1,
 ) -> np.ndarray:
-    p_it = []
-    bounds = []
-    for batch_tokens, batch_bounds in batches:
-        p_it_batch = norm(model.phi[batch_tokens], axis=1)
+    p_it_all = []
+    bounds_all = []
+
+    first_batch = True
+
+    for batch_tokens, batch_bounds, token_mask in batches:
+        batch_safe = jnp.where(token_mask, batch_tokens, 0)
+
+        p_it_batch = norm(model.phi[batch_safe], axis=1) * token_mask[:, None]
+
         for _ in range(num_attn_passes):
             theta_batch = calc_attn(
                 matrix=p_it_batch,
                 ctx_bounds=batch_bounds,
                 ctx_weights=model.context_weights,
+                token_mask=token_mask,
             )
-            p_it_batch = norm(p_it_batch * theta_batch / (model.n_t + EPSILON), axis=1)
-        p_it.append(p_it_batch)
-        bounds.append(batch_bounds)
-    p_it = np.concatenate(p_it)
-    bounds = np.concatenate(bounds)
+            p_it_batch = norm(
+                p_it_batch * theta_batch / (model.n_t + EPSILON),
+                axis=1,
+            )
+            p_it_batch = p_it_batch * token_mask[:, None]
+
+        valid_np = np.asarray(jax.device_get(token_mask), dtype=bool)
+
+        p_np = np.asarray(jax.device_get(p_it_batch))[valid_np]
+        b_np = np.asarray(jax.device_get(batch_bounds), dtype=bool)[valid_np]
+
+        if len(b_np) > 0:
+            if not first_batch:
+                b_np[0] = True
+            first_batch = False
+
+        p_it_all.append(p_np)
+        bounds_all.append(b_np)
+
+    if len(p_it_all) == 0:
+        return np.empty((0, model.n_topics), dtype=np.float32)
+
+    p_it = np.concatenate(p_it_all, axis=0)
+    bounds = np.concatenate(bounds_all, axis=0)
+
     return aggregate_doc_topics(p_it, bounds)
 
 
-def aartm_phi_pwt(model: AttentiveTopicModel, train_tokens: jax.Array) -> np.ndarray:
-    phi_wt, _ = model.renormalize_phi(batch=train_tokens, phi=model.phi)
+def aartm_phi_pwt(
+    model: AttentiveTopicModel,
+    train_tokens: jax.Array | None = None,
+) -> np.ndarray:
+    if getattr(model, "p_w", None) is None:
+        if train_tokens is None:
+            raise ValueError("model.p_w is missing; pass train_tokens to estimate it.")
+        n_w = jnp.bincount(train_tokens, length=model.vocab_size)
+        p_w = n_w / jnp.sum(n_w)
+    else:
+        p_w = model.p_w
+
+    phi_wt = model.renormalize_phi(p_w=p_w, phi=model.phi)
     return np.asarray(jax.device_get(phi_wt))
 
 
@@ -361,9 +636,7 @@ def fit_aartm(
     batch_size: int = -1,
     decorrelation_tau: float = 0.0,
 ) -> tuple[AttentiveTopicModel, float]:
-    regs = []
-    if decorrelation_tau > 0:
-        regs.append(DecorrelationRegularization(tau=decorrelation_tau, mode="tw"))
+    regs = build_regularizers(decorrelation_tau, "tw")
 
     model = AttentiveTopicModel(
         vocab_size=len(data.vocab),
@@ -371,38 +644,27 @@ def fit_aartm(
         n_topics=n_topics,
         gamma=gamma,
         self_aware_context=self_aware_context,
-        regularizers=regs if regs else None,
+        regularizers=regs,
     )
 
-    if batch_size is not None and batch_size > 0:
-        batches = BatchedCorpusLoader(
-            data.train_tokens,
-            data.train_bounds,
-            batch_size=batch_size,
-        )
+    if batch_size is None or batch_size <= 0:
+        batch_size = int(len(data.train_tokens))
 
-    t0 = perf_counter()
-    if batch_size is not None and batch_size > 0:
-        model.fit(
-            data=batches,
-            ctx_bounds=None,
-            num_attn_passes=num_attn_passes,
-            max_iter=max_iter,
-            tol=tol,
-            seed=seed,
-            verbose=0,
-        )
-    else:
-        model.fit(
-            data=data.train_tokens,
-            ctx_bounds=data.train_bounds,
-            num_attn_passes=num_attn_passes,
-            max_iter=max_iter,
-            tol=tol,
-            seed=seed,
-            verbose=0,
-        )
-    elapsed = perf_counter() - t0
+    batches = data.make_loader(
+        "train",
+        batch_size=batch_size,
+    )
+
+    elapsed = fit_topic_model(
+        model,
+        batches=batches,
+        num_attn_passes=num_attn_passes,
+        max_iter=max_iter,
+        tol=tol,
+        seed=seed,
+        batch_size=batch_size,
+    )
+
     return model, elapsed
 
 
@@ -457,14 +719,19 @@ def evaluate_aartm(
 ) -> dict[str, float]:
     phi_wt = aartm_phi_pwt(model, data.train_tokens)
 
-    batches_train = BatchedCorpusLoader(
-        data.train_tokens, data.train_bounds, batch_size=batch_size
+    batches_train = data.make_loader("train", batch_size=batch_size)
+    X_train = infer_doc_topics_aartm(
+        model,
+        batches_train,
+        num_attn_passes=num_attn_passes,
     )
-    X_train = infer_doc_topics_aartm(model, batches_train, num_attn_passes=num_attn_passes)
-    batches_test = BatchedCorpusLoader(
-        data.test_tokens, data.test_bounds, batch_size=batch_size
+
+    batches_test = data.make_loader("test", batch_size=batch_size)
+    X_test = infer_doc_topics_aartm(
+        model,
+        batches_test,
+        num_attn_passes=num_attn_passes,
     )
-    X_test = infer_doc_topics_aartm(model, batches_test, num_attn_passes=num_attn_passes)
 
     metrics = {
         "npmi_10": npmi_score(phi_wt, data.train_bow, top_k=10),
@@ -599,47 +866,49 @@ class DocumentBatchedCorpusLoader:
         return iter(self._batches)
 
 
-def build_regularizers(decorrelation_tau: float, mode: str):
+def build_regularizers(decorrelation_tau: float, mode: str | None = None):
     regs = []
     if decorrelation_tau > 0:
-        regs.append(DecorrelationRegularization(tau=decorrelation_tau, mode=mode))
+        regs.append(DecorrelationRegularization(tau=decorrelation_tau))
     return regs if regs else None
 
 
 def fit_topic_model(
     model,
-    tokens: jax.Array,
-    bounds: jax.Array,
+    tokens: jax.Array | None = None,
+    bounds: jax.Array | None = None,
     *,
+    batches: Iterable[Batch] | None = None,
     num_attn_passes: int,
     max_iter: int,
     tol: float,
     seed: int,
-    batch_size: int = -1,
+    batch_size: int = 10000,
 ) -> float:
     t0 = perf_counter()
 
-    if batch_size is not None and batch_size > 0:
-        batches = BatchedCorpusLoader(tokens, bounds, batch_size=batch_size)
-        model.fit(
-            data=batches,
-            ctx_bounds=None,
-            num_attn_passes=num_attn_passes,
-            max_iter=max_iter,
-            tol=tol,
-            verbose=0,
-            seed=seed,
+    if batches is None:
+        if tokens is None or bounds is None:
+            raise ValueError("Either batches or tokens+bounds must be provided.")
+
+        if batch_size is None or batch_size <= 0:
+            batch_size = int(len(tokens))
+
+        batches = TokenBatchLoader(
+            tokens,
+            bounds,
+            batch_size=batch_size,
+            pad_token_id=0,
         )
-    else:
-        model.fit(
-            data=tokens,
-            ctx_bounds=bounds,
-            num_attn_passes=num_attn_passes,
-            max_iter=max_iter,
-            tol=tol,
-            verbose=0,
-            seed=seed,
-        )
+
+    model.fit(
+        batches,
+        num_attn_passes=num_attn_passes,
+        max_iter=max_iter,
+        tol=tol,
+        verbose=0,
+        seed=seed,
+    )
 
     return perf_counter() - t0
 
@@ -651,12 +920,14 @@ def infer_token_topics_aartm(
     *,
     num_attn_passes: int = 1,
 ) -> np.ndarray:
+    token_mask = jnp.ones(tokens.shape, dtype=jnp.bool_)
     p_it = norm(model.phi[tokens], axis=1)
     for _ in range(num_attn_passes):
         theta = calc_attn(
             matrix=p_it,
             ctx_bounds=bounds,
             ctx_weights=model.context_weights,
+            token_mask=token_mask,
         )
         p_it = norm(p_it * theta / (model.n_t + EPSILON), axis=1)
     return np.asarray(jax.device_get(p_it))
@@ -692,17 +963,6 @@ def truncate_corpus(
         jnp.asarray(new_tokens, dtype=jnp.int32),
         jnp.asarray(new_bounds, dtype=jnp.bool_),
     )
-
-
-def build_truncated_bow_tfidf(
-    tokens: jax.Array,
-    bounds: jax.Array,
-    vocab_size: int,
-):
-    bow = build_bow(tokens, bounds, vocab_size)
-    tfidf = TfidfTransformer(norm="l2")
-    tfidf_mat = tfidf.fit_transform(bow)
-    return bow, tfidf_mat
 
 
 def tokenize_docs_with_vocab(texts, labels, loader):
@@ -753,16 +1013,34 @@ def make_synthetic_boundary_dataset(
         c1, c2 = rng.choice(classes, size=2, replace=False)
         left = by_class[c1][rng.integers(len(by_class[c1]))][:per_side_tokens]
         right = by_class[c2][rng.integers(len(by_class[c2]))][:per_side_tokens]
+
         mixed_docs.append(left + right)
         true_boundaries.append(len(left))
 
-    tokens, bounds = loader._transform_impl(
-        mixed_docs,
-        return_doc_bounds=True,
-        preprocess=False,
-    )
+    vocab = loader.vocabulary
+    assert vocab is not None
 
-    return mixed_docs, tokens, bounds, np.asarray(true_boundaries, dtype=np.int32)
+    flat_tokens: list[int] = []
+    boundary_positions: list[int] = []
+
+    for doc in mixed_docs:
+        if len(flat_tokens) > 0:
+            boundary_positions.append(len(flat_tokens))
+
+        flat_tokens.extend([vocab[token] for token in doc])
+
+    flat_tokens_np = np.asarray(flat_tokens, dtype=np.int32)
+    bounds_np = np.zeros(len(flat_tokens_np), dtype=bool)
+
+    if len(boundary_positions) > 0:
+        bounds_np[np.asarray(boundary_positions, dtype=np.int32)] = True
+
+    return (
+        mixed_docs,
+        jnp.asarray(flat_tokens_np, dtype=jnp.int32),
+        jnp.asarray(bounds_np, dtype=jnp.bool_),
+        np.asarray(true_boundaries, dtype=np.int32),
+    )
 
 
 def hellinger_distance(p: np.ndarray, q: np.ndarray) -> float:
