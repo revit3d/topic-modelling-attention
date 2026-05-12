@@ -107,7 +107,9 @@ class CorpusDataLoader:
             try:
                 data_iter = iter(data)
             except TypeError as exc:
-                raise TypeError("data must be iterable or a callable returning an iterable") from exc
+                raise TypeError(
+                    "Data must be iterable or a callable returning an iterable"
+                ) from exc
 
             if data_iter is data:
                 raise TypeError(
@@ -337,7 +339,7 @@ class CorpusDataLoader:
             jnp.asarray(valid_mask, dtype=jnp.bool_),
         )
 
-    def __iter__(self) -> Iterator[Batch]:
+    def __iter__(self) -> Iterator[Batch]:  # noqa: C901
         """
         Lazily preprocess and batch the corpus.
 

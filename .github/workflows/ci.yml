@@ -46,8 +46,7 @@ jobs:
         poetry run pylint src/ \
           --max-line-length=100 \
           --disable="C0103,C0114,C0115" \
-          --fail-under 8.0 \
-          --ignore tests
+          --fail-under 8.0
 
     - name: Run tests
       run: poetry run pytest
