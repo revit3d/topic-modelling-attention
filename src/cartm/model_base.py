@@ -219,7 +219,7 @@ class ModelBase(ABC):
         for batch, _, token_mask in batches:
             n_w += jnp.bincount(
                 batch,
-                weights=token_mask,
+                weights=token_mask.astype(jnp.float32),
                 length=self.vocab_size,
             )
         self.p_w = n_w / jnp.sum(n_w)  # (W,)
