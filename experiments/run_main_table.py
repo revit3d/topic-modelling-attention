@@ -29,6 +29,9 @@ from experiments.topic_eval import (
     phi_to_topic_words,
     save_topic_words_list,
     evaluate_topic_words_and_doc_topics,
+    topic_eval_texts_from_data,
+    c_v_coherence_from_topic_words,
+    bertscore_from_topic_words,
 )
 from experiments.external_baselines import (
     fit_bertopic,
@@ -66,11 +69,58 @@ def parse_args():
     parser.add_argument("--max_df", type=str, default="0.5")
     parser.add_argument("--seeds", type=str, default="0,1,2")
     parser.add_argument("--embedding_model", type=str, default="all-MiniLM-L6-v2")
+
+    parser.add_argument("--bertscore_lang", type=str, default="en")
+    parser.add_argument("--bertscore_model", type=str, default=None)
+    parser.add_argument("--bertscore_batch_size", type=int, default=64)
+    parser.add_argument("--bertscore_rescale_with_baseline", action="store_true")
+    parser.add_argument("--bertscore_device", type=str, default=None)
     return parser.parse_args()
 
 
 def parse_csv_list(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
+
+
+def _topic_metric_top_k(args) -> int:
+    return max(25, args.coherence_top_k, args.bertscore_top_k)
+
+
+def _topic_eval_kwargs(args, data) -> dict[str, Any]:
+    return {
+        "cv_texts": topic_eval_texts_from_data(data),
+        "cv_top_k": args.coherence_top_k,
+        "bertscore_top_k": args.bertscore_top_k,
+        "bertscore_lang": args.bertscore_lang,
+        "bertscore_model_type": args.bertscore_model,
+        "bertscore_batch_size": args.bertscore_batch_size,
+        "bertscore_rescale_with_baseline": args.bertscore_rescale_with_baseline,
+        "bertscore_device": args.bertscore_device,
+    }
+
+
+def _topic_word_metric_values(
+    topic_words: list[list[str]],
+    data,
+    args,
+) -> dict[str, float]:
+    cv_texts = topic_eval_texts_from_data(data)
+    return {
+        f"c_v_{args.coherence_top_k}": c_v_coherence_from_topic_words(
+            topic_words,
+            cv_texts,
+            top_k=args.coherence_top_k,
+        ),
+        f"bertscore_f1_{args.bertscore_top_k}": bertscore_from_topic_words(
+            topic_words,
+            top_k=args.bertscore_top_k,
+            lang=args.bertscore_lang,
+            model_type=args.bertscore_model,
+            batch_size=args.bertscore_batch_size,
+            rescale_with_baseline=args.bertscore_rescale_with_baseline,
+            device=args.bertscore_device,
+        ),
+    }
 
 
 def fit_local_model(model_cls, data, args, seed):
@@ -121,9 +171,27 @@ def fit_nmf_spec(data, seed, n_topics, max_iter):
     return model, elapsed, {}
 
 
-def evaluate_lda_spec(model, data, cache, seed):
+def evaluate_aartm_spec(model, data, cache, seed, *, args):
+    metrics = evaluate_aartm(
+        model,
+        data,
+        batch_size=args.batch_size,
+        num_attn_passes=args.num_attn_passes,
+        seed=seed,
+    )
+    topic_words = aartm_topic_words(
+        model,
+        data,
+        cache,
+        _topic_metric_top_k(args),
+    )
+    metrics.update(_topic_word_metric_values(topic_words, data, args))
+    return metrics
+
+
+def evaluate_lda_spec(model, data, cache, seed, *, args):
     phi_wt = normalize_cols(model.components_.T)
-    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
+    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=_topic_metric_top_k(args))
 
     X_train = model.transform(data.train_bow)
     X_test = model.transform(data.test_bow)
@@ -139,12 +207,13 @@ def evaluate_lda_spec(model, data, cache, seed):
         train_bow=data.train_bow,
         vocab=data.vocab,
         seed=seed,
+        **_topic_eval_kwargs(args, data),
     )
 
 
-def evaluate_nmf_spec(model, data, cache, seed):
+def evaluate_nmf_spec(model, data, cache, seed, *, args):
     phi_wt = normalize_cols(model.components_.T)
-    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
+    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=_topic_metric_top_k(args))
 
     X_train = model.transform(data.train_tfidf)
     X_test = model.transform(data.test_tfidf)
@@ -160,6 +229,7 @@ def evaluate_nmf_spec(model, data, cache, seed):
         train_bow=data.train_bow,
         vocab=data.vocab,
         seed=seed,
+        **_topic_eval_kwargs(args, data),
     )
 
 
@@ -182,8 +252,8 @@ def fit_bertopic_spec(data, seed, n_topics, embedding_model):
     )
 
 
-def evaluate_bertopic_spec(model, data, cache, seed):
-    topic_words = bertopic_topic_words(model, top_k=25)
+def evaluate_bertopic_spec(model, data, cache, seed, *, args):
+    topic_words = bertopic_topic_words(model, top_k=_topic_metric_top_k(args))
     X_train = bertopic_doc_topics(model, cache["train_docs"])
     X_test = bertopic_doc_topics(model, cache["test_docs"])
 
@@ -196,6 +266,7 @@ def evaluate_bertopic_spec(model, data, cache, seed):
         train_bow=data.train_bow,
         vocab=data.vocab,
         seed=seed,
+        **_topic_eval_kwargs(args, data),
     )
 
 
@@ -213,8 +284,8 @@ def fit_ctm_spec(data, seed):
     )
 
 
-def evaluate_ctm_spec(model, data, cache, seed):
-    topic_words = ctm_topic_words(model, top_k=25)
+def evaluate_ctm_spec(model, data, cache, seed, *, args):
+    topic_words = ctm_topic_words(model, top_k=_topic_metric_top_k(args))
     X_train = ctm_doc_topics(model, cache["train_dataset"])
     X_test = ctm_doc_topics(model, cache["test_dataset"])
 
@@ -227,6 +298,7 @@ def evaluate_ctm_spec(model, data, cache, seed):
         train_bow=data.train_bow,
         vocab=data.vocab,
         seed=seed,
+        **_topic_eval_kwargs(args, data),
     )
 
 
@@ -239,37 +311,37 @@ def build_specs(args):
         "aartm": ModelSpec(
             name="AttentiveTopicModel",
             fit_fn=lambda data, seed: fit_local_model(AttentiveTopicModel, data, args, seed),
-            eval_fn=partial(evaluate_aartm, batch_size=args.batch_size, num_attn_passes=args.num_attn_passes),
+            eval_fn=partial(evaluate_aartm_spec, args=args),
             topic_words_fn=aartm_topic_words,
         ),
         "aartm_no_nwt": ModelSpec(
             name="AttentiveTopicModelNoNWT",
             fit_fn=lambda data, seed: fit_local_model(AttentiveTopicModelNoNWT, data, args, seed),
-            eval_fn=partial(evaluate_aartm, batch_size=args.batch_size, num_attn_passes=args.num_attn_passes),
+            eval_fn=partial(evaluate_aartm_spec, args=args),
             topic_words_fn=aartm_topic_words,
         ),
         "lda": ModelSpec(
             name="LDA",
             fit_fn=partial(fit_lda_spec, n_topics=args.n_topics, max_iter=args.max_iter),
-            eval_fn=evaluate_lda_spec,
+            eval_fn=partial(evaluate_lda_spec, args=args),
             topic_words_fn=lda_topic_words,
         ),
         "nmf": ModelSpec(
             name="NMF",
             fit_fn=partial(fit_nmf_spec, n_topics=args.n_topics, max_iter=args.max_iter),
-            eval_fn=evaluate_nmf_spec,
+            eval_fn=partial(evaluate_nmf_spec, args=args),
             topic_words_fn=nmf_topic_words,
         ),
         "bertopic": ModelSpec(
             name="BERTopic",
             fit_fn=partial(fit_bertopic_spec, n_topics=args.n_topics, embedding_model=args.embedding_model),
-            eval_fn=evaluate_bertopic_spec,
+            eval_fn=partial(evaluate_bertopic_spec, args=args),
             topic_words_fn=bertopic_words_spec,
         ),
         "ctm": ModelSpec(
             name="CombinedTM",
             fit_fn=fit_ctm_spec,
-            eval_fn=evaluate_ctm_spec,
+            eval_fn=partial(evaluate_ctm_spec, args=args),
             topic_words_fn=ctm_words_spec,
         ),
     }
