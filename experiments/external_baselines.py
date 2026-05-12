@@ -15,6 +15,7 @@ def preprocessed_docs(loader, texts: list[str]) -> list[str]:
     return [" ".join(loader.process_doc(text)) for text in texts]
 
 
+# -------------------- BERTopic --------------------
 def fit_bertopic(
     data,
     *,
@@ -92,6 +93,7 @@ def bertopic_doc_topics(model, docs: list[str]) -> np.ndarray:
     return normalize_rows(np.asarray(distr, dtype=np.float32))
 
 
+# -------------------- CTM --------------------
 def fit_combined_tm(
     data,
     *,
@@ -150,3 +152,215 @@ def ctm_topic_words(model, top_k: int = 25) -> list[list[str]]:
 def ctm_doc_topics(model, dataset) -> np.ndarray:
     theta = model.get_doc_topic_distribution(dataset, n_samples=20)
     return normalize_rows(np.asarray(theta, dtype=np.float32))
+
+
+# -------------------- BTM --------------------
+def fit_btm(
+    data,
+    *,
+    n_topics: int,
+    seed: int,
+    num_iterations: int = 100,
+    window: int = 15,
+):
+    import bitermplus as btm
+    import numpy as np
+
+    train_prep = preprocessed_docs(data.loader, data.train_texts_filtered)
+    test_prep  = preprocessed_docs(data.loader, data.test_texts_filtered)
+
+    X, vocab, vocab_dict = btm.get_words_freqs(train_prep)
+    docs_vec_train = btm.get_vectorized_docs(train_prep, vocab)
+    docs_vec_test  = btm.get_vectorized_docs(test_prep,  vocab)
+    biterms = btm.get_biterms(docs_vec_train, win=window)
+
+    model = btm.BTM(X, vocab, T=n_topics, M=20, alpha=50.0/n_topics,
+                    beta=0.01, seed=seed)
+    t0 = perf_counter()
+    model.fit(biterms, iterations=num_iterations, verbose=False)
+    elapsed = perf_counter() - t0
+
+    cache = {
+        "vocab": vocab,
+        "vocab_dict": vocab_dict,
+        "docs_vec_train": docs_vec_train,
+        "docs_vec_test":  docs_vec_test,
+    }
+    return model, elapsed, cache
+
+
+def btm_topic_words(model, top_k: int = 25) -> list[list[str]]:
+    import bitermplus as btm
+    return btm.get_top_topic_words(model, words_num=top_k).T.values.tolist()
+
+
+def btm_doc_topics(model, docs_vec) -> "np.ndarray":
+    # P(z|d) inferred from biterms in each document
+    return normalize_rows(model.transform(docs_vec))
+
+
+# -------------------- BigARTM --------------------
+def fit_bigartm(
+    data,
+    *,
+    n_topics: int,
+    seed: int,
+    max_iter: int = 50,
+    decorrelation_tau: float = 0.0,
+    sparsity_tau: float = 0.0,
+):
+    import artm
+    import os, tempfile, numpy as np, scipy.sparse as sp
+    from scipy.sparse import coo_matrix
+
+    # BigARTM expects a Vowpal Wabbit / UCI Bag-of-Words on disk.
+    # Build VW from data.train_bow.
+    tmpdir = tempfile.mkdtemp(prefix="bigartm_")
+    vw_path = os.path.join(tmpdir, "train.vw")
+    id2word = data.id2word
+    coo = data.train_bow.tocoo()
+    docs: dict[int, list[str]] = {}
+    for r, c, v in zip(coo.row.tolist(), coo.col.tolist(), coo.data.tolist()):
+        docs.setdefault(r, []).append(f"{id2word[int(c)]}:{int(v)}")
+    with open(vw_path, "w", encoding="utf-8") as f:
+        for r in range(data.train_bow.shape[0]):
+            tokens = docs.get(r, [])
+            f.write(f"doc{r} |@default_class " + " ".join(tokens) + "\n")
+
+    bv = artm.BatchVectorizer(data_path=vw_path, data_format="vowpal_wabbit",
+                              target_folder=os.path.join(tmpdir, "batches"))
+
+    dictionary = artm.Dictionary()
+    dictionary.gather(data_path=bv.data_path)
+
+    model = artm.ARTM(
+        num_topics=n_topics,
+        dictionary=dictionary,
+        seed=seed,
+        cache_theta=False,
+    )
+    model.scores.add(artm.PerplexityScore(name="perp", dictionary=dictionary))
+    if decorrelation_tau > 0:
+        model.regularizers.add(artm.DecorrelatorPhiRegularizer(
+            name="decorr", tau=decorrelation_tau))
+    if sparsity_tau > 0:
+        model.regularizers.add(artm.SmoothSparsePhiRegularizer(
+            name="sparse", tau=-abs(sparsity_tau)))
+
+    t0 = perf_counter()
+    model.fit_offline(batch_vectorizer=bv, num_collection_passes=max_iter)
+    elapsed = perf_counter() - t0
+
+    cache = {"batches_dir": os.path.join(tmpdir, "batches"),
+             "tmpdir": tmpdir, "id2word": id2word}
+    return model, elapsed, cache
+
+
+def bigartm_topic_words(model, top_k: int = 25) -> list[list[str]]:
+    phi = model.get_phi()  # DataFrame: rows=words, cols=topics
+    topics = []
+    for col in phi.columns:
+        topics.append(phi[col].sort_values(ascending=False).head(top_k).index.tolist())
+    return topics
+
+
+def bigartm_doc_topics(model, data, split: str = "train") -> "np.ndarray":
+    import artm, os, tempfile, numpy as np
+    bow = data.train_bow if split == "train" else data.test_bow
+    coo = bow.tocoo()
+    tmpdir = tempfile.mkdtemp(prefix="bigartm_inf_")
+    vw_path = os.path.join(tmpdir, f"{split}.vw")
+    docs: dict[int, list[str]] = {}
+    for r, c, v in zip(coo.row.tolist(), coo.col.tolist(), coo.data.tolist()):
+        docs.setdefault(r, []).append(f"{data.id2word[int(c)]}:{int(v)}")
+    with open(vw_path, "w", encoding="utf-8") as f:
+        for r in range(bow.shape[0]):
+            f.write(f"doc{r} |@default_class " + " ".join(docs.get(r, [])) + "\n")
+    bv = artm.BatchVectorizer(data_path=vw_path, data_format="vowpal_wabbit",
+                              target_folder=os.path.join(tmpdir, "batches"))
+    theta = model.transform(batch_vectorizer=bv)  # (T, D)
+    return normalize_rows(np.asarray(theta.T, dtype=np.float32))
+
+
+# -------------------- Contextual Top2Vec --------------------
+def fit_contextual_top2vec(
+    data,
+    *,
+    n_topics: int,
+    seed: int,
+    embedding_model_name: str = "all-MiniLM-L6-v2",
+):
+    import numpy as np
+    import random, os
+    random.seed(seed); np.random.seed(seed)
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+
+    from top2vec import Top2Vec
+
+    # 'distiluse-base-multilingual-cased' and 'universal-sentence-encoder' are
+    # built-in. For an arbitrary HF/SBERT model, pass a callable.
+    builtin = {
+        "universal-sentence-encoder",
+        "universal-sentence-encoder-multilingual",
+        "distiluse-base-multilingual-cased",
+    }
+    if embedding_model_name in builtin:
+        embedding_model = embedding_model_name
+        embedding_callable = None
+    else:
+        from sentence_transformers import SentenceTransformer
+        encoder = SentenceTransformer(embedding_model_name)
+        embedding_model = "custom"
+        def embedding_callable(texts):
+            return encoder.encode(list(texts), show_progress_bar=False,
+                                  normalize_embeddings=True)
+
+    t0 = perf_counter()
+    kwargs = dict(
+        documents=data.train_texts_filtered,
+        speed="learn",
+        workers=4,
+        min_count=2,
+        embedding_model=embedding_model,
+    )
+    if embedding_callable is not None:
+        kwargs["embedding_model"] = embedding_callable
+    model = Top2Vec(**kwargs)
+    if model.get_num_topics() > n_topics:
+        model.hierarchical_topic_reduction(num_topics=n_topics)
+    elapsed = perf_counter() - t0
+
+    return model, elapsed, {}
+
+
+def top2vec_topic_words(model, top_k: int = 25) -> list[list[str]]:
+    reduced = getattr(model, "topic_words_reduced", None)
+    words = reduced if reduced is not None else model.topic_words
+    return [list(w[:top_k]) for w in words]
+
+
+def top2vec_doc_topics(model, data, split: str = "train") -> "np.ndarray":
+    """
+    Top2Vec is centroid-based, so it has no per-doc topic distribution.
+    We approximate it by cosine similarity between doc vectors and topic vectors.
+    """
+    import numpy as np
+    texts = data.train_texts_filtered if split == "train" else data.test_texts_filtered
+    use_reduced = hasattr(model, "topic_vectors_reduced") and model.topic_vectors_reduced is not None
+    topic_vecs = model.topic_vectors_reduced if use_reduced else model.topic_vectors
+
+    if split == "train":
+        doc_vecs = model.document_vectors
+    else:
+        # Embed test docs in the same space.
+        if hasattr(model, "embed"):
+            doc_vecs = model.embed(texts)
+        else:
+            doc_vecs = model._embed_documents(texts)
+
+    def _l2(x):
+        n = np.linalg.norm(x, axis=1, keepdims=True); n[n == 0] = 1.0
+        return x / n
+    sim = _l2(doc_vecs) @ _l2(topic_vecs).T          # cosine in [-1, 1]
+    sim = np.maximum(sim, 0)                          # clip negatives
+    return normalize_rows(sim.astype(np.float32))

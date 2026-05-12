@@ -232,7 +232,8 @@ def main():
             rows.append(metrics)
 
             tfidf = TfidfTransformer(norm="l2")
-            train_tfidf_t = tfidf.fit_transform(train_bow_t)
+            tfidf.fit(data.train_bow)
+            train_tfidf_t = tfidf.transform(train_bow_t)
             test_tfidf_t = tfidf.transform(test_bow_t)
 
             X_train = normalize_rows(nmf.transform(train_tfidf_t))

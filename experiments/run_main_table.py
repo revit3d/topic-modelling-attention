@@ -34,12 +34,11 @@ from experiments.topic_eval import (
     bertscore_from_topic_words,
 )
 from experiments.external_baselines import (
-    fit_bertopic,
-    fit_combined_tm,
-    bertopic_doc_topics,
-    bertopic_topic_words,
-    ctm_doc_topics,
-    ctm_topic_words,
+    fit_bertopic, bertopic_topic_words, bertopic_doc_topics,
+    fit_combined_tm, ctm_topic_words, ctm_doc_topics,
+    fit_btm, btm_topic_words, btm_doc_topics,
+    fit_bigartm, bigartm_topic_words, bigartm_doc_topics,
+    fit_contextual_top2vec, top2vec_topic_words, top2vec_doc_topics,
 )
 
 
@@ -55,7 +54,11 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="20ng", choices=["20ng", "ag_news", "dbpedia14"])
     parser.add_argument("--out_dir", type=str, default="results/main_table")
-    parser.add_argument("--models", type=str, default="aartm,aartm_no_nwt,lda,nmf,bertopic,ctm")
+    parser.add_argument(
+        "--models",
+        type=str,
+        default="aartm,aartm_no_nwt,lda,nmf,bertopic,ctm,btm,bigartm,top2vec",
+    )
     parser.add_argument("--n_topics", type=int, default=100)
     parser.add_argument("--ctx_len", type=int, default=100)
     parser.add_argument("--gamma", type=float, default=0.01)
@@ -268,7 +271,7 @@ def bertopic_words_spec(model, data, cache, top_k):
     return bertopic_topic_words(model, top_k=top_k)
 
 
-def fit_ctm_spec(data, seed):
+def fit_ctm_spec(data, seed, *, args):
     return fit_combined_tm(
         data,
         n_topics=args.n_topics,
@@ -298,6 +301,78 @@ def evaluate_ctm_spec(model, data, cache, seed, *, args):
 
 def ctm_words_spec(model, data, cache, top_k):
     return ctm_topic_words(model, top_k=top_k)
+
+
+def fit_btm_spec(data, seed, *, args):
+    return fit_btm(data, n_topics=args.n_topics, seed=seed,
+                   num_iterations=args.max_iter)
+
+
+def evaluate_btm_spec(model, data, cache, seed, *, args):
+    topic_words = btm_topic_words(model, top_k=25)
+    X_train = btm_doc_topics(model, cache["docs_vec_train"])
+    X_test  = btm_doc_topics(model, cache["docs_vec_test"])
+    return evaluate_topic_words_and_doc_topics(
+        topic_words=topic_words,
+        X_train=X_train, X_test=X_test,
+        y_train=data.y_train, y_test=data.y_test,
+        train_bow=data.train_bow, vocab=data.vocab,
+        seed=seed,
+        **_topic_eval_kwargs(args, data),
+    )
+
+
+def btm_words_spec(model, data, cache, top_k):
+    return btm_topic_words(model, top_k=top_k)
+
+
+def fit_bigartm_spec(data, seed, *, args):
+    return fit_bigartm(data, n_topics=args.n_topics, seed=seed,
+                       max_iter=args.max_iter,
+                       decorrelation_tau=args.decorrelation_tau)
+
+
+def evaluate_bigartm_spec(model, data, cache, seed, *, args):
+    topic_words = bigartm_topic_words(model, top_k=25)
+    X_train = bigartm_doc_topics(model, data, split="train")
+    X_test  = bigartm_doc_topics(model, data, split="test")
+    return evaluate_topic_words_and_doc_topics(
+        topic_words=topic_words,
+        X_train=X_train, X_test=X_test,
+        y_train=data.y_train, y_test=data.y_test,
+        train_bow=data.train_bow, vocab=data.vocab,
+        seed=seed,
+        **_topic_eval_kwargs(args, data),
+    )
+
+
+def bigartm_words_spec(model, data, cache, top_k):
+    return bigartm_topic_words(model, top_k=top_k)
+
+
+def fit_top2vec_spec(data, seed, *, args):
+    return fit_contextual_top2vec(
+        data, n_topics=args.n_topics, seed=seed,
+        embedding_model_name=args.embedding_model,
+    )
+
+
+def evaluate_top2vec_spec(model, data, cache, seed, *, args):
+    topic_words = top2vec_topic_words(model, top_k=25)
+    X_train = top2vec_doc_topics(model, data, split="train")
+    X_test  = top2vec_doc_topics(model, data, split="test")
+    return evaluate_topic_words_and_doc_topics(
+        topic_words=topic_words,
+        X_train=X_train, X_test=X_test,
+        y_train=data.y_train, y_test=data.y_test,
+        train_bow=data.train_bow, vocab=data.vocab,
+        seed=seed,
+        **_topic_eval_kwargs(args, data),
+    )
+
+
+def top2vec_words_spec(model, data, cache, top_k):
+    return top2vec_topic_words(model, top_k=top_k)
 
 
 def build_specs(args):
@@ -334,9 +409,27 @@ def build_specs(args):
         ),
         "ctm": ModelSpec(
             name="CombinedTM",
-            fit_fn=fit_ctm_spec,
+            fit_fn=partial(fit_ctm_spec, args=args),
             eval_fn=partial(evaluate_ctm_spec, args=args),
             topic_words_fn=ctm_words_spec,
+        ),
+        "btm": ModelSpec(
+            name="BTM",
+            fit_fn=partial(fit_btm_spec, args=args),
+            eval_fn=partial(evaluate_btm_spec, args=args),
+            topic_words_fn=btm_words_spec,
+        ),
+        "bigartm": ModelSpec(
+            name="BigARTM",
+            fit_fn=partial(fit_bigartm_spec, args=args),
+            eval_fn=partial(evaluate_bigartm_spec, args=args),
+            topic_words_fn=bigartm_words_spec,
+        ),
+        "top2vec": ModelSpec(
+            name="ContextualTop2Vec",
+            fit_fn=partial(fit_top2vec_spec, args=args),
+            eval_fn=partial(evaluate_top2vec_spec, args=args),
+            topic_words_fn=top2vec_words_spec,
         ),
     }
 

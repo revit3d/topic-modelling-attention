@@ -149,12 +149,10 @@ class AttentiveTopicModel(ModelBase):
         self.n_t = jnp.ones(self.n_topics, dtype=jnp.float32)
 
     def _compose_regularizations(self):
+        p_w = self.p_w
         regs = self._regularizations.values()
         reg_grad = jax.grad(
-            lambda x: sum(
-                [1.0,]
-                + [reg(self.renormalize_phi(p_w=self.p_w, phi=x)) for reg in regs]
-            )
+            lambda x: sum([1.0,] + [reg(self.renormalize_phi(p_w=p_w, phi=x)) for reg in regs])
         )
         return jax.jit(reg_grad)
 

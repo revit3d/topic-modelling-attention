@@ -68,10 +68,10 @@ class ModelBase(ABC):
     def _step(
         batch: jax.Array,
         ctx_bounds: jax.Array,
+        token_mask: jax.Array,
         phi: jax.Array,
         n_t: jax.Array,
         ctx_weights: jax.Array,
-        grad_reg: Callable,
         num_attn_passes: int,
     ) -> tuple:
         pass
@@ -212,9 +212,6 @@ class ModelBase(ABC):
         if num_attn_passes <= 0:
             raise ValueError("num_attn_passes has to be a positive value.")
 
-        self._init_state(seed=seed)
-        grad_regularization = self._compose_regularizations()
-
         n_w = jnp.zeros(self.vocab_size)
         for batch, _, token_mask in batches:
             n_w += jnp.bincount(
@@ -223,6 +220,9 @@ class ModelBase(ABC):
                 length=self.vocab_size,
             )
         self.p_w = n_w / jnp.sum(n_w)  # (W,)
+
+        self._init_state(seed=seed)
+        grad_regularization = self._compose_regularizations()
 
         for it in range(max_iter):
             phi_new, n_t_new = self._batched_step_wrapper(

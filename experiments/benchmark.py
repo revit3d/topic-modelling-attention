@@ -6,9 +6,8 @@ import numpy as np
 import pandas as pd
 
 from cartm import AttentiveTopicModel
-from model_no_N_wt import AttentiveTopicModelNoNWT
-from experiments.common import TokenBatchLoader
-from common import prepare_data
+from experiments.model_no_N_wt import AttentiveTopicModelNoNWT
+from experiments.common import TokenBatchLoader, prepare_data
 
 
 def block_tree(x):
