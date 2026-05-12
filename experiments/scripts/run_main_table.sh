@@ -1,5 +1,5 @@
 python3 -m experiments.run_main_table \
-    --dataset dbpedia14 \
+    --dataset 20ng \
     --out_dir results/main_table/100topics \
     --n_topics 100 \
     --ctx_len 100 \

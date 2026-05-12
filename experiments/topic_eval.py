@@ -112,9 +112,7 @@ def c_v_coherence_from_topic_words(
         from gensim.models.coherencemodel import CoherenceModel
     except ImportError:
         warnings.warn(
-            "gensim is not installed; returning NaN for C_v coherence. "
-            "Install with: pip install gensim",
-            stacklevel=2,
+            "gensim is not installed; returning NaN for C_v coherence."
         )
         return float("nan")
 
@@ -170,9 +168,7 @@ def bertscore_from_topic_words(
         from bert_score import score
     except ImportError:
         warnings.warn(
-            "bert-score is not installed; returning NaN for BERTScore. "
-            "Install with: pip install bert-score",
-            stacklevel=2,
+            "bert-score is not installed; returning NaN for BERTScore."
         )
         return float("nan")
 
@@ -273,8 +269,8 @@ def evaluate_topic_words_and_doc_topics(
     metrics = {
         "npmi_10": npmi_from_topic_words(topic_words, vocab, train_bow, top_k=10),
         "topic_diversity_25": topic_diversity_from_topic_words(topic_words, top_k=25),
-        f"c_v_10": c_v_coherence_from_topic_words(topic_words, cv_texts, top_k=10),
-        f"bertscore_f1_10": bertscore_from_topic_words(
+        "c_v_10": c_v_coherence_from_topic_words(topic_words, cv_texts, top_k=10),
+        "bertscore_f1_10": bertscore_from_topic_words(
             topic_words,
             top_k=10,
             lang=bertscore_lang,

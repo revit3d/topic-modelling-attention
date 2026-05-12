@@ -82,15 +82,9 @@ def parse_csv_list(s: str) -> list[str]:
     return [x.strip() for x in s.split(",") if x.strip()]
 
 
-def _topic_metric_top_k(args) -> int:
-    return max(25, args.coherence_top_k, args.bertscore_top_k)
-
-
 def _topic_eval_kwargs(args, data) -> dict[str, Any]:
     return {
         "cv_texts": topic_eval_texts_from_data(data),
-        "cv_top_k": args.coherence_top_k,
-        "bertscore_top_k": args.bertscore_top_k,
         "bertscore_lang": args.bertscore_lang,
         "bertscore_model_type": args.bertscore_model,
         "bertscore_batch_size": args.bertscore_batch_size,
@@ -106,14 +100,14 @@ def _topic_word_metric_values(
 ) -> dict[str, float]:
     cv_texts = topic_eval_texts_from_data(data)
     return {
-        f"c_v_{args.coherence_top_k}": c_v_coherence_from_topic_words(
+        "c_v_10": c_v_coherence_from_topic_words(
             topic_words,
             cv_texts,
-            top_k=args.coherence_top_k,
+            top_k=10,
         ),
-        f"bertscore_f1_{args.bertscore_top_k}": bertscore_from_topic_words(
+        "bertscore_f1_10": bertscore_from_topic_words(
             topic_words,
-            top_k=args.bertscore_top_k,
+            top_k=10,
             lang=args.bertscore_lang,
             model_type=args.bertscore_model,
             batch_size=args.bertscore_batch_size,
@@ -183,7 +177,7 @@ def evaluate_aartm_spec(model, data, cache, seed, *, args):
         model,
         data,
         cache,
-        _topic_metric_top_k(args),
+        top_k=25,
     )
     metrics.update(_topic_word_metric_values(topic_words, data, args))
     return metrics
@@ -191,7 +185,7 @@ def evaluate_aartm_spec(model, data, cache, seed, *, args):
 
 def evaluate_lda_spec(model, data, cache, seed, *, args):
     phi_wt = normalize_cols(model.components_.T)
-    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=_topic_metric_top_k(args))
+    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
 
     X_train = model.transform(data.train_bow)
     X_test = model.transform(data.test_bow)
@@ -213,7 +207,7 @@ def evaluate_lda_spec(model, data, cache, seed, *, args):
 
 def evaluate_nmf_spec(model, data, cache, seed, *, args):
     phi_wt = normalize_cols(model.components_.T)
-    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=_topic_metric_top_k(args))
+    topic_words = phi_to_topic_words(phi_wt, data.id2word, top_k=25)
 
     X_train = model.transform(data.train_tfidf)
     X_test = model.transform(data.test_tfidf)
@@ -253,7 +247,7 @@ def fit_bertopic_spec(data, seed, n_topics, embedding_model):
 
 
 def evaluate_bertopic_spec(model, data, cache, seed, *, args):
-    topic_words = bertopic_topic_words(model, top_k=_topic_metric_top_k(args))
+    topic_words = bertopic_topic_words(model, top_k=25)
     X_train = bertopic_doc_topics(model, cache["train_docs"])
     X_test = bertopic_doc_topics(model, cache["test_docs"])
 
@@ -285,7 +279,7 @@ def fit_ctm_spec(data, seed):
 
 
 def evaluate_ctm_spec(model, data, cache, seed, *, args):
-    topic_words = ctm_topic_words(model, top_k=_topic_metric_top_k(args))
+    topic_words = ctm_topic_words(model, top_k=25)
     X_train = ctm_doc_topics(model, cache["train_dataset"])
     X_test = ctm_doc_topics(model, cache["test_dataset"])
 
