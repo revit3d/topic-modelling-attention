@@ -16,6 +16,13 @@ from experiments.common import (
     parse_df_arg,
     build_regularizers,
     fit_topic_model,
+    aartm_phi_pwt,
+    aartm_perplexity,
+)
+from experiments.topic_eval import (
+    phi_to_topic_words,
+    topic_eval_texts_from_data,
+    c_v_coherence_from_topic_words,
 )
 
 
@@ -45,7 +52,7 @@ def parse_args():
     parser.add_argument("--gammas", type=str, default="0.2,0.4,0.6,0.8")
     parser.add_argument("--self_aware_values", type=str, default="false,true")
     parser.add_argument("--num_attn_passes_values", type=str, default="1,2,4")
-    parser.add_argument("--decorrelation_taus", type=str, default="0.0,0.1")
+    parser.add_argument("--decorrelation_taus", type=str, default="0.0")
     parser.add_argument("--model_variants", type=str, default="full,no_nwt")
     parser.add_argument("--max_iter", type=int, default=50)
     parser.add_argument("--tol", type=float, default=1e-4)
@@ -53,6 +60,14 @@ def parse_args():
     parser.add_argument("--min_df", type=str, default="5")
     parser.add_argument("--max_df", type=str, default="0.5")
     parser.add_argument("--seeds", type=str, default="0,1,2")
+    parser.add_argument("--cv_top_k", type=int, default=10)
+    parser.add_argument("--cv_processes", type=int, default=1)
+    parser.add_argument(
+        "--perplexity_splits",
+        type=str,
+        default="test",
+        help="Comma-separated splits for perplexity calculation: train,test",
+    )
     return parser.parse_args()
 
 
@@ -70,6 +85,13 @@ def main():
         min_token_len=3,
         max_token_len=20,
     )
+
+    perplexity_splits = parse_str_list(args.perplexity_splits)
+    invalid_splits = set(perplexity_splits) - {"train", "test"}
+    if invalid_splits:
+        raise ValueError(f"Invalid perplexity_splits values: {sorted(invalid_splits)}")
+
+    cv_texts = topic_eval_texts_from_data(data)
 
     seeds = parse_int_list(args.seeds)
     ctx_lens = parse_int_list(args.ctx_lens)
@@ -129,6 +151,29 @@ def main():
             batch_size=args.batch_size,
             seed=seed,
         )
+
+        # Topic-word metrics: C_v coherence.
+        phi_wt = aartm_phi_pwt(model, data.train_tokens)
+        topic_words = phi_to_topic_words(
+            phi_wt,
+            data.id2word,
+            top_k=args.cv_top_k,
+        )
+        metrics[f"c_v_{args.cv_top_k}"] = c_v_coherence_from_topic_words(
+            topic_words,
+            cv_texts,
+            top_k=args.cv_top_k,
+            processes=args.cv_processes,
+        )
+
+        # Held-out / train perplexity.
+        for split in perplexity_splits:
+            metrics[f"perplexity_{split}"] = aartm_perplexity(
+                model,
+                data.make_loader(split, batch_size=args.batch_size),
+                num_attn_passes=num_attn_passes,
+                phi_wt=phi_wt,
+            )
         metrics.update({
             "dataset": args.dataset,
             "model_variant": variant,

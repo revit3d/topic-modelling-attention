@@ -570,6 +570,98 @@ def mean_nearest_hellinger(phi_wt: np.ndarray) -> float:
     return float(dist.min(axis=1).mean())
 
 
+@jax.jit(static_argnames=("num_attn_passes",))
+def _aartm_log_likelihood_batch(
+    batch: jax.Array,
+    ctx_bounds: jax.Array,
+    token_mask: jax.Array,
+    phi_tw: jax.Array,
+    phi_wt: jax.Array,
+    n_t: jax.Array,
+    ctx_weights: jax.Array,
+    num_attn_passes: int,
+) -> tuple[jax.Array, jax.Array]:
+    """
+    Batch log-likelihood for AARTM-style models.
+
+    phi_tw is model.phi = p(t|w)
+    phi_wt is renormalized phi = p(w|t)
+
+    Uses the same theta inference logic as infer_doc_topics_aartm.
+    """
+    batch_safe = jnp.where(token_mask, batch, 0)
+
+    p_it = norm(phi_tw[batch_safe], axis=1) * token_mask[:, None]
+    theta = jnp.zeros_like(p_it)
+
+    for _ in range(num_attn_passes):
+        theta = calc_attn(
+            matrix=p_it,
+            ctx_bounds=ctx_bounds,
+            ctx_weights=ctx_weights,
+            token_mask=token_mask,
+        )
+        p_it = norm(
+            p_it * theta / (n_t + EPSILON),
+            axis=1,
+        )
+        p_it = p_it * token_mask[:, None]
+
+    # p(w_i | C_i) = sum_t p(w_i | t) p(t | C_i)
+    p_wi = jnp.sum(theta * phi_wt[batch_safe], axis=1)
+
+    log_likelihood = jnp.sum(jnp.log(p_wi + EPSILON) * token_mask)
+    num_words = jnp.sum(token_mask)
+
+    return log_likelihood, num_words
+
+
+def aartm_perplexity(
+    model: AttentiveTopicModel,
+    batches: Iterable[Batch],
+    *,
+    num_attn_passes: int = 1,
+    phi_wt: np.ndarray | jax.Array | None = None,
+    train_tokens: jax.Array | None = None,
+) -> float:
+    """
+    Offline perplexity for AttentiveTopicModel / AttentiveTopicModelNoNWT.
+
+    Returns:
+        exp(- log_likelihood / num_words)
+    """
+    if num_attn_passes <= 0:
+        raise ValueError("num_attn_passes must be positive.")
+
+    if phi_wt is None:
+        phi_wt = aartm_phi_pwt(model, train_tokens)
+
+    phi_wt = jnp.asarray(phi_wt)
+
+    total_log_likelihood = 0.0
+    total_words = 0
+
+    for batch, ctx_bounds, token_mask in batches:
+        ll_batch, n_batch = _aartm_log_likelihood_batch(
+            batch=batch,
+            ctx_bounds=ctx_bounds,
+            token_mask=token_mask,
+            phi_tw=model.phi,
+            phi_wt=phi_wt,
+            n_t=model.n_t,
+            ctx_weights=model.context_weights,
+            num_attn_passes=num_attn_passes,
+        )
+
+        total_log_likelihood += float(jax.device_get(ll_batch))
+        total_words += int(jax.device_get(n_batch))
+
+    if total_words == 0:
+        return float("nan")
+
+    return float(np.exp(-total_log_likelihood / total_words))
+
+
 def npmi_score(phi_wt: np.ndarray, bow: sp.csr_matrix, top_k: int = 10) -> float:
     bow = bow.sign().astype(np.uint8).tocsc(copy=False)
     df = np.asarray(bow.getnnz(axis=0)).ravel().astype(np.float32)

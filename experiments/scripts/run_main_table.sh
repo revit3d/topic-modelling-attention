@@ -5,22 +5,32 @@ python3 -m experiments.run_main_table \
     --ctx_len 100 \
     --gamma 0.01 \
     --num_attn_passes 1 \
-    --batch_size 10000 \
-    --decorrelation_tau 0.0
+    --min_df 10 \
+    --max_df 0.1 \
+    --batch_size 10000
 
-
-python3 -m experiments.run_ablation \
-    --dataset 20ng \
-    --out_dir results/ablation/100topics \
+python3 -m experiments.run_main_table \
+    --dataset ag_news \
+    --out_dir results/main_table/100topics \
     --n_topics 100 \
-    --ctx_lens "100" \
-    --gammas "0.01" \
-    --num_attn_passes_values "1" \
-    --decorrelation_taus "0.0, 0.1, 0.4, 0.7, 1.0, 1.3" \
+    --ctx_len 100 \
+    --gamma 0.01 \
+    --num_attn_passes 1 \
+    --min_df 25 \
+    --max_df 0.1 \
+    --batch_size 10000
+
+python3 -m experiments.run_main_table \
+    --dataset dbpedia14 \
+    --out_dir results/main_table/100topics \
+    --n_topics 100 \
+    --ctx_len 100 \
+    --gamma 0.01 \
+    --num_attn_passes 1 \
+    --min_df 100 \
+    --max_df 0.1 \
     --batch_size 10000 \
-    --self_aware_values "false" \
-    --model_variants "full" \
-    --seeds "0,1,2"
+    --seeds 1
 
 
 python3 -m experiments.run_length_robustness \
@@ -43,11 +53,3 @@ python3 -m experiments.boundary_detection \
     --boundary_window 16 \
     --n_pairs 500 \
     --seeds "0,1,2"
-
-
-python3 -m experiments.run_stability \
-    --dataset 20ng \
-    --out_dir results/stablity/100topics \
-    --n_topics 100 \
-    --ctx_len 100 \
-    --gamma 0.01

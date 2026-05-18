@@ -105,12 +105,15 @@ def fit_combined_tm(
     from sentence_transformers import SentenceTransformer
     from contextualized_topic_models.models.ctm import CombinedTM
     from contextualized_topic_models.utils.data_preparation import TopicModelDataPreparation
+    import torch
+
+    torch.manual_seed(seed)
 
     train_bow_text = preprocessed_docs(data.loader, data.train_texts_filtered)
     test_bow_text = preprocessed_docs(data.loader, data.test_texts_filtered)
 
     encoder = SentenceTransformer(embedding_model_name)
-    contextual_size = encoder.get_sentence_embedding_dimension()
+    contextual_size = encoder.get_embedding_dimension()
 
     qt = TopicModelDataPreparation(embedding_model_name)
     training_dataset = qt.fit(
@@ -126,7 +129,8 @@ def fit_combined_tm(
         bow_size=len(qt.vocab),
         contextual_size=contextual_size,
         n_components=n_topics,
-        num_epochs=num_epochs,
+        num_epochs=10,
+        batch_size=64,
     )
 
     t0 = perf_counter()
@@ -177,7 +181,7 @@ def fit_btm(
     model = btm.BTM(X, vocab, T=n_topics, M=20, alpha=50.0/n_topics,
                     beta=0.01, seed=seed)
     t0 = perf_counter()
-    model.fit(biterms, iterations=num_iterations, verbose=False)
+    model.fit(biterms, iterations=num_iterations, verbose=True)
     elapsed = perf_counter() - t0
 
     cache = {
@@ -195,7 +199,6 @@ def btm_topic_words(model, top_k: int = 25) -> list[list[str]]:
 
 
 def btm_doc_topics(model, docs_vec) -> "np.ndarray":
-    # P(z|d) inferred from biterms in each document
     return normalize_rows(model.transform(docs_vec))
 
 
@@ -213,8 +216,6 @@ def fit_bigartm(
     import os, tempfile, numpy as np, scipy.sparse as sp
     from scipy.sparse import coo_matrix
 
-    # BigARTM expects a Vowpal Wabbit / UCI Bag-of-Words on disk.
-    # Build VW from data.train_bow.
     tmpdir = tempfile.mkdtemp(prefix="bigartm_")
     vw_path = os.path.join(tmpdir, "train.vw")
     id2word = data.id2word
@@ -257,7 +258,7 @@ def fit_bigartm(
 
 
 def bigartm_topic_words(model, top_k: int = 25) -> list[list[str]]:
-    phi = model.get_phi()  # DataFrame: rows=words, cols=topics
+    phi = model.get_phi()
     topics = []
     for col in phi.columns:
         topics.append(phi[col].sort_values(ascending=False).head(top_k).index.tolist())
@@ -297,8 +298,6 @@ def fit_contextual_top2vec(
 
     from top2vec import Top2Vec
 
-    # 'distiluse-base-multilingual-cased' and 'universal-sentence-encoder' are
-    # built-in. For an arbitrary HF/SBERT model, pass a callable.
     builtin = {
         "universal-sentence-encoder",
         "universal-sentence-encoder-multilingual",
@@ -352,7 +351,6 @@ def top2vec_doc_topics(model, data, split: str = "train") -> "np.ndarray":
     if split == "train":
         doc_vecs = model.document_vectors
     else:
-        # Embed test docs in the same space.
         if hasattr(model, "embed"):
             doc_vecs = model.embed(texts)
         else:
