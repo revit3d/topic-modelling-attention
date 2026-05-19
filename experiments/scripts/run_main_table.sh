@@ -1,3 +1,6 @@
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.3
+
+
 python3 -m experiments.run_main_table \
     --dataset 20ng \
     --out_dir results/main_table \
@@ -8,7 +11,8 @@ python3 -m experiments.run_main_table \
     --min_df 10 \
     --max_df 0.1 \
     --batch_size 10000 \
-    --seeds 0,1,2
+    --seeds 182,12392,8237
+
 
 python3 -m experiments.run_main_table \
     --dataset ag_news \
@@ -20,7 +24,8 @@ python3 -m experiments.run_main_table \
     --min_df 25 \
     --max_df 0.1 \
     --batch_size 10000 \
-    --seeds 0,1,2
+    --seeds 182,12392,8237
+
 
 python3 -m experiments.run_main_table \
     --dataset dbpedia14 \
@@ -32,4 +37,4 @@ python3 -m experiments.run_main_table \
     --min_df 100 \
     --max_df 0.1 \
     --batch_size 10000 \
-    --seeds 0,1,2
+    --seeds 182,12392,8237

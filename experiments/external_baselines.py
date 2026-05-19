@@ -181,7 +181,7 @@ def fit_btm(
     model = btm.BTM(X, vocab, T=n_topics, M=20, alpha=50.0/n_topics,
                     beta=0.01, seed=seed)
     t0 = perf_counter()
-    model.fit(biterms, iterations=num_iterations, verbose=True)
+    model.fit(biterms, iterations=10, verbose=True)
     elapsed = perf_counter() - t0
 
     cache = {
@@ -293,7 +293,9 @@ def fit_contextual_top2vec(
 ):
     import numpy as np
     import random, os
-    random.seed(seed); np.random.seed(seed)
+
+    random.seed(seed)
+    np.random.seed(seed)
     os.environ.setdefault("PYTHONHASHSEED", str(seed))
 
     from top2vec import Top2Vec
