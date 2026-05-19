@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 
 import jax
 import numpy as np
@@ -102,8 +103,12 @@ def print_benchmark_result(res):
 
 
 if __name__ == "__main__":
+    np.random.seed(42)
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
-    data = prepare_data("20ng")
+    data = prepare_data("20ng", min_df=10, max_df=0.1)
+
+    save_path = Path('./results/benchmark')
+    save_path.mkdir(parents=True, exist_ok=True)
 
     def run_model_batched(model, batches):
         model.fit(
@@ -119,7 +124,6 @@ if __name__ == "__main__":
             for batch_size in [10_000]:
                 for model_type in [AttentiveTopicModelNoNWT, AttentiveTopicModel]:
                     for device in ['gpu']:
-                        # prepare batches
                         loader = TokenBatchLoader(
                             data.train_tokens,
                             data.train_bounds,
@@ -127,14 +131,12 @@ if __name__ == "__main__":
                             pad_token_id=0,
                         )
 
-                        # prepare model
                         model = model_type(
                             vocab_size=len(data.vocab),
                             ctx_len=ctx_len,
                             n_topics=n_topics,
                         )
 
-                        # move data to device
                         jax_device = jax.devices(device)[0]
                         tokenized_data = jax.device_put(data.train_tokens, device=jax_device)
                         document_bounds = jax.device_put(data.train_bounds, device=jax_device)
@@ -160,4 +162,5 @@ if __name__ == "__main__":
                         print_benchmark_result(res)
                         res.update(config)
                         benchmark_results.append(res)
-    pd.DataFrame(benchmark_results).to_csv('./results/benchmark/summary.csv')
+
+    pd.DataFrame(benchmark_results).to_csv(save_path / "summary.csv")
