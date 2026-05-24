@@ -47,7 +47,7 @@ def parse_args():
     parser.add_argument("--tol", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=10000)
     parser.add_argument("--decorrelation_tau", type=float, default=0.0)
-    parser.add_argument("--trunc_lengths", type=str, default="8,16,32,64,128")
+    parser.add_argument("--trunc_lengths", type=str, default="2,4,6,8,10,16,32")
     parser.add_argument("--min_df", type=str, default="5")
     parser.add_argument("--max_df", type=str, default="0.5")
     parser.add_argument("--seeds", type=str, default="0,1,2")

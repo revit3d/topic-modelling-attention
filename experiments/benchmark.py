@@ -39,20 +39,20 @@ def benchmark_any_fn(
         args = jax.device_put(args, device)
         kwargs = jax.device_put(kwargs, device)
 
-    # Compile + first execution
+    # compile + first execution
     t0 = time.perf_counter()
     out = fn(*args, **kwargs)
     block_tree(out)
     t1 = time.perf_counter()
     compile_plus_run = t1 - t0
 
-    # Warmup runs
+    # warmup runs
     for _ in range(warmup_runs):
         out = fn(*args, **kwargs)
         block_tree(out)
     print("=== Warmup ok ===")
 
-    # Steady-state runs
+    # steady-state runs
     times = []
     for _ in range(bench_runs):
         t0 = time.perf_counter()
@@ -115,6 +115,7 @@ if __name__ == "__main__":
             batches,
             max_iter=50,
             verbose=0,
+            tol=0,
             seed=np.random.randint(0, 1000),
         )
 

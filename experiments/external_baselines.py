@@ -100,7 +100,6 @@ def fit_combined_tm(
     n_topics: int,
     seed: int,
     embedding_model_name: str = "all-MiniLM-L6-v2",
-    num_epochs: int = 50,
 ):
     from sentence_transformers import SentenceTransformer
     from contextualized_topic_models.models.ctm import CombinedTM
@@ -165,7 +164,7 @@ def fit_btm(
     n_topics: int,
     seed: int,
     num_iterations: int = 100,
-    window: int = 15,
+    window: int = 3,
 ):
     import bitermplus as btm
     import numpy as np
@@ -181,7 +180,7 @@ def fit_btm(
     model = btm.BTM(X, vocab, T=n_topics, M=20, alpha=50.0/n_topics,
                     beta=0.01, seed=seed)
     t0 = perf_counter()
-    model.fit(biterms, iterations=10, verbose=True)
+    model.fit(biterms, iterations=num_iterations, verbose=True)
     elapsed = perf_counter() - t0
 
     cache = {
@@ -321,7 +320,7 @@ def fit_contextual_top2vec(
         documents=data.train_texts_filtered,
         speed="learn",
         workers=4,
-        min_count=2,
+        min_count=10,
         embedding_model=embedding_model,
     )
     if embedding_callable is not None:
