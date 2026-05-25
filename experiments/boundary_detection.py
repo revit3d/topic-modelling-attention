@@ -41,8 +41,8 @@ def parse_args():
     parser.add_argument("--per_side_tokens", type=int, default=64)
     parser.add_argument("--n_pairs", type=int, default=500)
     parser.add_argument("--boundary_window", type=int, default=16)
-    parser.add_argument("--min_df", type=str, default="5")
-    parser.add_argument("--max_df", type=str, default="0.5")
+    parser.add_argument("--min_df", type=str, default="10")
+    parser.add_argument("--max_df", type=str, default="0.1")
     parser.add_argument("--seeds", type=str, default="0,1,2")
     return parser.parse_args()
 

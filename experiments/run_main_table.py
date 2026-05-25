@@ -68,8 +68,8 @@ def parse_args():
     parser.add_argument("--tol", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=10000)
     parser.add_argument("--decorrelation_tau", type=float, default=0.0)
-    parser.add_argument("--min_df", type=str, default="5")
-    parser.add_argument("--max_df", type=str, default="0.5")
+    parser.add_argument("--min_df", type=str, default="10")
+    parser.add_argument("--max_df", type=str, default="0.1")
     parser.add_argument("--seeds", type=str, default="0,1,2")
     parser.add_argument("--embedding_model", type=str, default="all-MiniLM-L6-v2")
 
@@ -277,7 +277,6 @@ def fit_ctm_spec(data, seed, *, args):
         n_topics=args.n_topics,
         seed=seed,
         embedding_model_name=args.embedding_model,
-        num_epochs=args.max_iter,
     )
 
 

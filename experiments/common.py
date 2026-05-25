@@ -344,8 +344,8 @@ def _tokenize_and_filter_empty_docs(
 def prepare_data(
     dataset_name: Literal["20ng", "ag_news", "dbpedia14"],
     *,
-    min_df: int | float = 5,
-    max_df: int | float = 0.5,
+    min_df: int | float = 10,
+    max_df: int | float = 0.1,
     min_token_len: int = 3,
     max_token_len: int = 20,
 ) -> PreparedData:
