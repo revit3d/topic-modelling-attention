@@ -239,7 +239,7 @@ def fit_bigartm(
         seed=seed,
         cache_theta=False,
     )
-    model.scores.add(artm.PerplexityScore(name="perp", dictionary=dictionary))
+    # model.scores.add(artm.PerplexityScore(name="perp", dictionary=dictionary))
     if decorrelation_tau > 0:
         model.regularizers.add(artm.DecorrelatorPhiRegularizer(
             name="decorr", tau=decorrelation_tau))
