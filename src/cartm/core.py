@@ -108,5 +108,5 @@ def calc_attn_transposed(
     gathered_coeff = coeff[jnp.arange(coeff.shape[0])[:, None], src_idx_safe]
     gathered_coeff = gathered_coeff * src_valid
 
-    out = jnp.sum(gathered_coeff[..., None] * gathered_matrix, axis=0) * token_mask[:, None]
+    out = jnp.sum(gathered_coeff[..., None] * gathered_matrix, axis=0)
     return out
