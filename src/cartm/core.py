@@ -65,7 +65,7 @@ def calc_attn(
     inv_denom = jnp.where(denom > EPSILON, 1.0 / denom, 0.0)
 
     coeff = coeff * inv_denom[None, :]
-    out = jnp.sum(coeff[..., None] * shifted, axis=0) * token_mask[:, None]
+    out = jnp.sum(coeff[..., None] * shifted, axis=0)
 
     return out
 
