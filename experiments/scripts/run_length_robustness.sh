@@ -1,3 +1,5 @@
+#!/bin/bash
+
 python3 -m experiments.run_length_robustness \
     --dataset 20ng \
     --out_dir results/length_robustness \

@@ -1,3 +1,5 @@
+#!/bin/bash
+
 python3 -m experiments.boundary_detection \
     --dataset 20ng \
     --out_dir results/boundary_detection \
