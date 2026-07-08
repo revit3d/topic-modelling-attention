@@ -96,6 +96,7 @@ class ModelBase(ABC):
         batch: jax.Array,
         phi: jax.Array,
         theta: jax.Array,
+        token_mask: jax.Array,
     ):
         pass
 
