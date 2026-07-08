@@ -166,6 +166,12 @@ class AttentiveTopicModel(ModelBase):
         phi_wt = phi * p_w[:, None] / (p_t[None, :] + EPSILON)  # (W, T)
         return phi_wt
 
+    def get_phi(self) -> jax.Array:
+        try:
+            return self.renormalize_phi(self.p_w, self.phi)
+        except Exception:
+            return None
+
     def _calc_metrics_batch(
         self,
         *,
@@ -185,3 +191,53 @@ class AttentiveTopicModel(ModelBase):
                 theta=theta,
                 valid_mask=token_mask,
             )
+
+    def fit(
+        self,
+        batches: Iterable[tuple[jax.Array, jax.Array, jax.Array]],
+        *,
+        lr: float = 0.1,
+        num_batches_before_update: int = -1,
+        num_attn_passes: int = 1,
+        max_iter: int = 1000,
+        tol: float = 1e-3,
+        verbose: int = 0,
+        seed: int = 0,
+    ):
+        if num_attn_passes <= 0:
+            raise ValueError("num_attn_passes has to be a positive value.")
+
+        n_w = jnp.zeros(self.vocab_size)
+        for batch, _, token_mask in batches:
+            n_w += jnp.bincount(
+                batch,
+                weights=token_mask.astype(jnp.float32),
+                length=self.vocab_size,
+            )
+        self.p_w = n_w / jnp.sum(n_w)  # (W,)
+
+        self._init_state(seed=seed)
+        grad_regularization = self._compose_regularizations()
+
+        for it in range(max_iter):
+            phi_new, n_t_new = self._batched_step_wrapper(
+                batches=batches,
+                ctx_weights=self.context_weights,
+                grad_reg=grad_regularization,
+                num_attn_passes=num_attn_passes,
+                lr=lr,
+                num_batches_before_update=num_batches_before_update,
+            )
+
+            diff_norm = jnp.linalg.norm(self.renormalize_phi(self.p_w, phi_new) - self.renormalize_phi(self.p_w, self.phi))
+            if verbose > 0:
+                print(
+                    f"Iteration [{it + 1}/{max_iter}], phi update diff norm: {diff_norm:.04f}"
+                )
+
+            self._flush_metrics(verbose=verbose)
+
+            self.phi = phi_new
+            self.n_t = n_t_new
+            if diff_norm < tol:
+                break

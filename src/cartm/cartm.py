@@ -148,3 +148,6 @@ class ContextTopicModel(ModelBase):
                 theta=theta,
                 valid_mask=token_mask,
             )
+
+    def get_phi(self) -> jax.Array:
+        return self.phi
