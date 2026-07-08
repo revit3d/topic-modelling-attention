@@ -35,7 +35,7 @@ class _PrefetchError:
         self.exc = exc
 
 
-def _prefetch(source: Iterator[Batch], size: int) -> Iterator[Batch]:
+def _prefetch(source: Iterator[Batch], size: int) -> Iterator[Batch]:  # noqa: C901
     q: queue.Queue[Any] = queue.Queue(maxsize=size)
     stop = threading.Event()
 

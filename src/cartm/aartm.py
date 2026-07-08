@@ -229,7 +229,7 @@ class AttentiveTopicModel(ModelBase):
                 num_batches_before_update=num_batches_before_update,
             )
 
-            diff_norm = jnp.linalg.norm(self.renormalize_phi(self.p_w, phi_new) - self.renormalize_phi(self.p_w, self.phi))
+            diff_norm = jnp.linalg.norm(self.renormalize_phi(self.p_w, phi_new) - self.get_phi())
             if verbose > 0:
                 print(
                     f"Iteration [{it + 1}/{max_iter}], phi update diff norm: {diff_norm:.04f}"
